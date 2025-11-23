@@ -1,0 +1,40 @@
+# Cleo - AI Agent Orchestration System
+# Microsoft Agent Framework + Claude + Microsoft Graph
+
+# Agent Framework (in preview - using custom implementation for now)
+# agent-framework>=0.1.0
+
+# Claude API
+anthropic>=0.40.0
+
+# Microsoft Graph API
+# Note: msgraph-sdk requires Windows Long Path support to be enabled
+# Run as admin: New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+# msgraph-sdk>=1.0.0
+azure-identity>=1.15.0
+msal>=1.25.0
+O365>=2.0.30
+
+# Web Framework
+Flask>=3.0.0
+Flask-SQLAlchemy>=3.1.1
+Flask-CORS>=4.0.0
+
+# Task Scheduling
+APScheduler>=3.10.4
+
+# Integrations
+python-telegram-bot>=20.0
+todoist-api-python>=3.1.0
+
+# Utilities
+python-dotenv>=1.0.0
+pyyaml>=6.0
+requests>=2.31.0
+
+# Database
+SQLAlchemy>=2.0.23
+
+# Development
+pytest>=7.4.0
+black>=23.0.0
