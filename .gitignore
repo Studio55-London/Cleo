@@ -62,3 +62,5 @@ htmlcov/
 
 # Distribution / packaging
 .Python
+# API Keys - DO NOT COMMIT
+Context/Claude API.txt
