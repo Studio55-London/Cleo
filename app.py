@@ -8,8 +8,10 @@ from datetime import datetime
 from flask import Flask, render_template, jsonify, request, redirect, url_for, session
 from flask_cors import CORS
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
-from models import db, User, Agent, Job, Activity, Space, Message
+from models import db, User, Agent, Job, Activity, Space, Message, Document, DocumentChunk, Entity, Relation
 from agents import get_agent, list_agent_names, agent_count
+from knowledge_processor import get_processor
+from werkzeug.utils import secure_filename
 import json
 
 # Configure logging
@@ -28,6 +30,14 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///agents.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# File upload configuration
+app.config['UPLOAD_FOLDER'] = 'data/knowledge/documents'
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
+ALLOWED_EXTENSIONS = {'pdf', 'docx', 'doc', 'txt', 'md'}
+
+# Ensure upload directory exists
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Initialize extensions
 db.init_app(app)
@@ -1429,6 +1439,249 @@ def get_status():
             'success': False,
             'message': str(e)
         }), 500
+
+# ===================================
+# API Routes - Knowledge Base
+# ===================================
+
+def allowed_file(filename):
+    """Check if file extension is allowed"""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+@app.route('/api/knowledge/upload', methods=['POST'])
+def upload_document():
+    """Upload and process a document"""
+    try:
+        # Check if file is present
+        if 'file' not in request.files:
+            return jsonify({
+                'success': False,
+                'message': 'No file provided'
+            }), 400
+
+        file = request.files['file']
+
+        if file.filename == '':
+            return jsonify({
+                'success': False,
+                'message': 'No file selected'
+            }), 400
+
+        if not allowed_file(file.filename):
+            return jsonify({
+                'success': False,
+                'message': f'File type not allowed. Allowed types: {", ".join(ALLOWED_EXTENSIONS)}'
+            }), 400
+
+        # Secure the filename
+        filename = secure_filename(file.filename)
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+
+        # Check if file already exists
+        if os.path.exists(file_path):
+            # Add timestamp to make unique
+            name, ext = os.path.splitext(filename)
+            filename = f"{name}_{int(datetime.now().timestamp())}{ext}"
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+
+        # Save file
+        file.save(file_path)
+        file_size = os.path.getsize(file_path)
+        file_type = filename.rsplit('.', 1)[1].lower()
+
+        # Create document record
+        document = Document(
+            name=filename,
+            file_path=file_path,
+            file_type=file_type,
+            file_size=file_size,
+            status='processing'
+        )
+
+        db.session.add(document)
+        db.session.commit()
+
+        # Process document
+        try:
+            processor = get_processor()
+
+            # Extract text
+            text_content, metadata = processor.extract_text(file_path)
+            document.content = text_content
+
+            # Chunk text
+            chunks = processor.chunk_text(text_content, metadata)
+
+            # Save chunks
+            for chunk_data in chunks:
+                chunk = DocumentChunk(
+                    document_id=document.id,
+                    chunk_index=chunk_data['chunk_index'],
+                    content=chunk_data['content'],
+                    token_count=chunk_data['token_count'],
+                    metadata=json.dumps(chunk_data['metadata'])
+                )
+                db.session.add(chunk)
+
+            # Extract entities
+            entities = processor.extract_entities(text_content)
+            entity_map = {}
+
+            for entity_data in entities:
+                entity = Entity(
+                    name=entity_data['name'],
+                    entity_type=entity_data['type'],
+                    mention_count=entity_data['mentions'],
+                    source_chunks=json.dumps([])  # Will be updated later
+                )
+                db.session.add(entity)
+                entity_map[entity_data['name']] = entity
+
+            # Extract relations
+            relations = processor.extract_relations(text_content, entities)
+
+            for relation_data in relations:
+                source_entity = entity_map.get(relation_data['source'])
+                target_entity = entity_map.get(relation_data['target'])
+
+                if source_entity and target_entity:
+                    relation = Relation(
+                        source_entity_id=source_entity.id,
+                        target_entity_id=target_entity.id,
+                        relation_type=relation_data['type'],
+                        confidence=relation_data['confidence']
+                    )
+                    db.session.add(relation)
+
+            # Update document status
+            document.status = 'completed'
+            document.chunk_count = len(chunks)
+            document.entity_count = len(entities)
+            document.processed_at = datetime.now()
+
+            db.session.commit()
+
+            logger.info(f"Document processed: {filename} ({len(chunks)} chunks, {len(entities)} entities)")
+
+            return jsonify({
+                'success': True,
+                'document': {
+                    'id': document.id,
+                    'name': document.name,
+                    'file_type': document.file_type,
+                    'file_size': document.file_size,
+                    'status': document.status,
+                    'chunk_count': document.chunk_count,
+                    'entity_count': document.entity_count,
+                    'uploaded_at': document.uploaded_at.isoformat()
+                },
+                'message': 'Document uploaded and processed successfully'
+            })
+
+        except Exception as e:
+            # Update document status to failed
+            document.status = 'failed'
+            db.session.commit()
+
+            logger.error(f"Document processing failed: {e}")
+
+            return jsonify({
+                'success': False,
+                'message': f'Document processing failed: {str(e)}'
+            }), 500
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Document upload error: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/knowledge/documents', methods=['GET'])
+def get_documents():
+    """Get all documents with statistics"""
+    try:
+        documents = Document.query.order_by(Document.uploaded_at.desc()).all()
+
+        documents_list = []
+        for doc in documents:
+            documents_list.append({
+                'id': doc.id,
+                'name': doc.name,
+                'file_type': doc.file_type,
+                'file_size': doc.file_size,
+                'status': doc.status,
+                'chunk_count': doc.chunk_count,
+                'entity_count': doc.entity_count,
+                'uploaded_at': doc.uploaded_at.isoformat() if doc.uploaded_at else None,
+                'processed_at': doc.processed_at.isoformat() if doc.processed_at else None
+            })
+
+        # Calculate statistics
+        total_chunks = db.session.query(db.func.count(DocumentChunk.id)).scalar()
+        total_entities = db.session.query(db.func.count(Entity.id)).scalar()
+        total_relations = db.session.query(db.func.count(Relation.id)).scalar()
+
+        return jsonify({
+            'success': True,
+            'documents': documents_list,
+            'stats': {
+                'total_documents': len(documents_list),
+                'total_chunks': total_chunks or 0,
+                'total_entities': total_entities or 0,
+                'total_relations': total_relations or 0
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching documents: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/knowledge/documents/<int:doc_id>', methods=['DELETE'])
+def delete_document(doc_id):
+    """Delete a document and its associated data"""
+    try:
+        document = db.session.get(Document, doc_id)
+
+        if not document:
+            return jsonify({
+                'success': False,
+                'message': 'Document not found'
+            }), 404
+
+        # Delete the file from disk
+        if os.path.exists(document.file_path):
+            try:
+                os.remove(document.file_path)
+            except Exception as e:
+                logger.warning(f"Failed to delete file {document.file_path}: {e}")
+
+        # Delete document (cascade will delete chunks)
+        db.session.delete(document)
+        db.session.commit()
+
+        logger.info(f"Document deleted: {document.name}")
+
+        return jsonify({
+            'success': True,
+            'message': 'Document deleted successfully'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error deleting document: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
 
 # ===================================
 # Error Handlers
