@@ -713,6 +713,702 @@ def get_messages(space_id):
         }), 500
 
 # ===================================
+# API Routes - Agents (Update/Delete)
+# ===================================
+
+@app.route('/api/agents/<int:agent_id>', methods=['PUT'])
+def update_agent(agent_id):
+    """Update an agent"""
+    try:
+        agent = db.session.get(Agent, agent_id)
+
+        if not agent:
+            return jsonify({
+                'success': False,
+                'message': 'Agent not found'
+            }), 404
+
+        data = request.get_json()
+
+        # Update fields
+        if 'name' in data:
+            agent.name = data['name']
+        if 'description' in data:
+            agent.description = data['description']
+        if 'status' in data:
+            agent.status = data['status']
+
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'agent': agent.to_dict(),
+            'message': 'Agent updated successfully'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/agents/<int:agent_id>', methods=['DELETE'])
+def delete_agent(agent_id):
+    """Delete an agent"""
+    try:
+        agent = db.session.get(Agent, agent_id)
+
+        if not agent:
+            return jsonify({
+                'success': False,
+                'message': 'Agent not found'
+            }), 404
+
+        # Prevent deletion of seeded agents (optional check)
+        if agent.id <= 31:  # First 31 are seeded agents
+            return jsonify({
+                'success': False,
+                'message': 'Cannot delete system agents'
+            }), 403
+
+        db.session.delete(agent)
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': 'Agent deleted successfully'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+# ===================================
+# API Routes - Jobs (Full CRUD)
+# ===================================
+
+@app.route('/api/jobs', methods=['GET'])
+def get_jobs():
+    """Get all jobs"""
+    try:
+        jobs = Job.query.order_by(Job.created_at.desc()).all()
+        jobs_list = [job.to_dict() for job in jobs]
+
+        return jsonify({
+            'success': True,
+            'jobs': jobs_list
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/jobs/<int:job_id>', methods=['GET'])
+def get_job(job_id):
+    """Get a specific job"""
+    try:
+        job = db.session.get(Job, job_id)
+
+        if not job:
+            return jsonify({
+                'success': False,
+                'message': 'Job not found'
+            }), 404
+
+        return jsonify({
+            'success': True,
+            'job': job.to_dict()
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/jobs', methods=['POST'])
+def create_job():
+    """Create a new job"""
+    try:
+        data = request.get_json()
+
+        # Validate required fields
+        if not data.get('agent_id'):
+            return jsonify({
+                'success': False,
+                'message': 'agent_id is required'
+            }), 400
+
+        if not data.get('name'):
+            return jsonify({
+                'success': False,
+                'message': 'name is required'
+            }), 400
+
+        # Check if agent exists
+        agent = db.session.get(Agent, data['agent_id'])
+        if not agent:
+            return jsonify({
+                'success': False,
+                'message': 'Agent not found'
+            }), 404
+
+        # Create job
+        job = Job(
+            agent_id=data['agent_id'],
+            name=data['name'],
+            description=data.get('description', ''),
+            frequency=data.get('frequency', 'manual'),
+            cron_expression=data.get('cron_expression'),
+            sop=data.get('sop', ''),
+            status=data.get('status', 'active')
+        )
+
+        db.session.add(job)
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'job': job.to_dict(),
+            'message': 'Job created successfully'
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/jobs/<int:job_id>', methods=['PUT'])
+def update_job(job_id):
+    """Update a job"""
+    try:
+        job = db.session.get(Job, job_id)
+
+        if not job:
+            return jsonify({
+                'success': False,
+                'message': 'Job not found'
+            }), 404
+
+        data = request.get_json()
+
+        # Update fields
+        if 'name' in data:
+            job.name = data['name']
+        if 'description' in data:
+            job.description = data['description']
+        if 'frequency' in data:
+            job.frequency = data['frequency']
+        if 'cron_expression' in data:
+            job.cron_expression = data['cron_expression']
+        if 'sop' in data:
+            job.sop = data['sop']
+        if 'status' in data:
+            job.status = data['status']
+        if 'last_run' in data:
+            job.last_run = data['last_run']
+        if 'next_run' in data:
+            job.next_run = data['next_run']
+
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'job': job.to_dict(),
+            'message': 'Job updated successfully'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/jobs/<int:job_id>', methods=['DELETE'])
+def delete_job(job_id):
+    """Delete a job"""
+    try:
+        job = db.session.get(Job, job_id)
+
+        if not job:
+            return jsonify({
+                'success': False,
+                'message': 'Job not found'
+            }), 404
+
+        db.session.delete(job)
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': 'Job deleted successfully'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+# ===================================
+# API Routes - Activities (CRUD)
+# ===================================
+
+@app.route('/api/activities', methods=['GET'])
+def get_activities():
+    """Get all activities with optional filtering"""
+    try:
+        # Get query parameters for filtering
+        agent_id = request.args.get('agent_id', type=int)
+        job_id = request.args.get('job_id', type=int)
+        status = request.args.get('status')
+        limit = request.args.get('limit', 50, type=int)
+
+        # Build query
+        query = Activity.query
+
+        if agent_id:
+            query = query.filter_by(agent_id=agent_id)
+        if job_id:
+            query = query.filter_by(job_id=job_id)
+        if status:
+            query = query.filter_by(status=status)
+
+        # Order by most recent first and limit
+        activities = query.order_by(Activity.created_at.desc()).limit(limit).all()
+        activities_list = [activity.to_dict() for activity in activities]
+
+        return jsonify({
+            'success': True,
+            'activities': activities_list
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/activities/<int:activity_id>', methods=['GET'])
+def get_activity(activity_id):
+    """Get a specific activity"""
+    try:
+        activity = db.session.get(Activity, activity_id)
+
+        if not activity:
+            return jsonify({
+                'success': False,
+                'message': 'Activity not found'
+            }), 404
+
+        return jsonify({
+            'success': True,
+            'activity': activity.to_dict()
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/activities', methods=['POST'])
+def create_activity():
+    """Create a new activity"""
+    try:
+        data = request.get_json()
+
+        # Validate required fields
+        if not data.get('agent_id'):
+            return jsonify({
+                'success': False,
+                'message': 'agent_id is required'
+            }), 400
+
+        if not data.get('title'):
+            return jsonify({
+                'success': False,
+                'message': 'title is required'
+            }), 400
+
+        # Create activity
+        activity = Activity(
+            agent_id=data['agent_id'],
+            job_id=data.get('job_id'),
+            title=data['title'],
+            summary=data.get('summary', ''),
+            output_data=data.get('output_data'),
+            status=data.get('status', 'success')
+        )
+
+        db.session.add(activity)
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'activity': activity.to_dict(),
+            'message': 'Activity created successfully'
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/activities/<int:activity_id>', methods=['PUT'])
+def update_activity(activity_id):
+    """Update an activity"""
+    try:
+        activity = db.session.get(Activity, activity_id)
+
+        if not activity:
+            return jsonify({
+                'success': False,
+                'message': 'Activity not found'
+            }), 404
+
+        data = request.get_json()
+
+        # Update fields
+        if 'title' in data:
+            activity.title = data['title']
+        if 'summary' in data:
+            activity.summary = data['summary']
+        if 'output_data' in data:
+            activity.output_data = data['output_data']
+        if 'status' in data:
+            activity.status = data['status']
+
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'activity': activity.to_dict(),
+            'message': 'Activity updated successfully'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/activities/<int:activity_id>', methods=['DELETE'])
+def delete_activity(activity_id):
+    """Delete an activity"""
+    try:
+        activity = db.session.get(Activity, activity_id)
+
+        if not activity:
+            return jsonify({
+                'success': False,
+                'message': 'Activity not found'
+            }), 404
+
+        db.session.delete(activity)
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': 'Activity deleted successfully'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+# ===================================
+# API Routes - Messages (Update/Delete)
+# ===================================
+
+@app.route('/api/messages/<int:message_id>', methods=['GET'])
+def get_message(message_id):
+    """Get a specific message"""
+    try:
+        message = db.session.get(Message, message_id)
+
+        if not message:
+            return jsonify({
+                'success': False,
+                'message': 'Message not found'
+            }), 404
+
+        return jsonify({
+            'success': True,
+            'message': message.to_dict()
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/messages/<int:message_id>', methods=['PUT'])
+def update_message(message_id):
+    """Update a message"""
+    try:
+        message = db.session.get(Message, message_id)
+
+        if not message:
+            return jsonify({
+                'success': False,
+                'message': 'Message not found'
+            }), 404
+
+        data = request.get_json()
+
+        # Update content
+        if 'content' in data:
+            message.content = data['content']
+
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': message.to_dict()
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/messages/<int:message_id>', methods=['DELETE'])
+def delete_message(message_id):
+    """Delete a message"""
+    try:
+        message = db.session.get(Message, message_id)
+
+        if not message:
+            return jsonify({
+                'success': False,
+                'message': 'Message not found'
+            }), 404
+
+        db.session.delete(message)
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': 'Message deleted successfully'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+# ===================================
+# API Routes - Users (Update/Delete)
+# ===================================
+
+@app.route('/api/users', methods=['GET'])
+@login_required
+def get_users():
+    """Get all users (admin only)"""
+    try:
+        # Check if current user is admin
+        if not current_user.is_admin:
+            return jsonify({
+                'success': False,
+                'message': 'Unauthorized: Admin access required'
+            }), 403
+
+        users = User.query.all()
+        users_list = [user.to_dict() for user in users]
+
+        return jsonify({
+            'success': True,
+            'users': users_list
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/users/<int:user_id>', methods=['GET'])
+@login_required
+def get_user(user_id):
+    """Get a specific user"""
+    try:
+        # Users can only view their own profile unless they're admin
+        if current_user.id != user_id and not current_user.is_admin:
+            return jsonify({
+                'success': False,
+                'message': 'Unauthorized'
+            }), 403
+
+        user = db.session.get(User, user_id)
+
+        if not user:
+            return jsonify({
+                'success': False,
+                'message': 'User not found'
+            }), 404
+
+        return jsonify({
+            'success': True,
+            'user': user.to_dict()
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/users/<int:user_id>', methods=['PUT'])
+@login_required
+def update_user(user_id):
+    """Update a user"""
+    try:
+        # Users can only update their own profile unless they're admin
+        if current_user.id != user_id and not current_user.is_admin:
+            return jsonify({
+                'success': False,
+                'message': 'Unauthorized'
+            }), 403
+
+        user = db.session.get(User, user_id)
+
+        if not user:
+            return jsonify({
+                'success': False,
+                'message': 'User not found'
+            }), 404
+
+        data = request.get_json()
+
+        # Update fields
+        if 'full_name' in data:
+            user.full_name = data['full_name']
+        if 'email' in data:
+            # Check if email is already taken
+            existing_user = User.query.filter_by(email=data['email']).first()
+            if existing_user and existing_user.id != user_id:
+                return jsonify({
+                    'success': False,
+                    'message': 'Email already in use'
+                }), 400
+            user.email = data['email']
+
+        # Only allow password change for own account
+        if 'password' in data and current_user.id == user_id:
+            user.set_password(data['password'])
+
+        # Only admin can change admin status
+        if 'is_admin' in data and current_user.is_admin:
+            user.is_admin = data['is_admin']
+
+        # Only admin can change active status
+        if 'is_active' in data and current_user.is_admin:
+            user.is_active = data['is_active']
+
+        db.session.commit()
+
+        logger.info(f"User updated: {user.username}")
+
+        return jsonify({
+            'success': True,
+            'user': user.to_dict(),
+            'message': 'User updated successfully'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/users/<int:user_id>', methods=['DELETE'])
+@login_required
+def delete_user(user_id):
+    """Delete a user (admin only)"""
+    try:
+        # Only admin can delete users
+        if not current_user.is_admin:
+            return jsonify({
+                'success': False,
+                'message': 'Unauthorized: Admin access required'
+            }), 403
+
+        # Prevent self-deletion
+        if current_user.id == user_id:
+            return jsonify({
+                'success': False,
+                'message': 'Cannot delete your own account'
+            }), 400
+
+        user = db.session.get(User, user_id)
+
+        if not user:
+            return jsonify({
+                'success': False,
+                'message': 'User not found'
+            }), 404
+
+        username = user.username
+        db.session.delete(user)
+        db.session.commit()
+
+        logger.info(f"User deleted: {username}")
+
+        return jsonify({
+            'success': True,
+            'message': 'User deleted successfully'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+# ===================================
 # API Routes - System
 # ===================================
 
