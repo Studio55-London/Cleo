@@ -34,6 +34,7 @@ requests>=2.31.0
 
 # Database
 SQLAlchemy>=2.0.23
+alembic>=1.13.0
 
 # Development
 pytest>=7.4.0
