@@ -26,6 +26,7 @@ APScheduler>=3.10.4
 
 # Integrations
 python-telegram-bot>=20.0
+httpx>=0.24.0
 todoist-api-python>=3.1.0
 
 # Utilities
