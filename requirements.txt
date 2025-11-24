@@ -41,3 +41,12 @@ alembic>=1.13.0
 # Development
 pytest>=7.4.0
 black>=23.0.0
+
+# Knowledge Base / GraphRAG
+PyPDF2>=3.0.0
+python-docx>=1.1.0
+chromadb>=0.4.0
+numpy>=1.24.0
+sentence-transformers>=2.2.0
+networkx>=3.0
+tiktoken>=0.5.0

@@ -262,6 +262,215 @@ class Message(db.Model):
         return f'<Message {self.role} in Space {self.space_id}>'
 
 
+# ===================================
+# Knowledge Base Models (GraphRAG)
+# ===================================
+
+class Document(db.Model):
+    """Uploaded document for knowledge base"""
+    __tablename__ = 'documents'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(255), nullable=False)
+    file_path = db.Column(db.String(500), nullable=False)
+    file_type = db.Column(db.String(50))  # pdf, docx, txt, md
+    file_size = db.Column(db.Integer)  # in bytes
+    content = db.Column(db.Text)  # Extracted text content
+    status = db.Column(db.String(20), default='processing')  # processing, ready, error
+    chunk_count = db.Column(db.Integer, default=0)
+    entity_count = db.Column(db.Integer, default=0)
+    uploaded_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
+    processed_at = db.Column(db.DateTime)
+
+    # Relationships
+    chunks = db.relationship('DocumentChunk', backref='document', lazy=True, cascade='all, delete-orphan')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'file_type': self.file_type,
+            'size': self.format_file_size(),
+            'status': self.status,
+            'chunks': self.chunk_count,
+            'entities': self.entity_count,
+            'uploaded_at': self.uploaded_at.isoformat(),
+            'processed_at': self.processed_at.isoformat() if self.processed_at else None
+        }
+
+    def format_file_size(self):
+        """Format file size in human-readable format"""
+        if not self.file_size:
+            return "Unknown"
+
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if self.file_size < 1024.0:
+                return f"{self.file_size:.1f} {unit}"
+            self.file_size /= 1024.0
+        return f"{self.file_size:.1f} TB"
+
+    def __repr__(self):
+        return f'<Document {self.name}>'
+
+
+class DocumentChunk(db.Model):
+    """Text chunk from a document with embeddings"""
+    __tablename__ = 'document_chunks'
+
+    id = db.Column(db.Integer, primary_key=True)
+    document_id = db.Column(db.Integer, db.ForeignKey('documents.id'), nullable=False)
+    chunk_index = db.Column(db.Integer, nullable=False)  # Order in document
+    content = db.Column(db.Text, nullable=False)  # The actual text chunk
+    token_count = db.Column(db.Integer)
+    embedding = db.Column(db.Text)  # JSON-serialized vector embedding
+    metadata = db.Column(db.Text)  # JSON metadata (page number, section, etc.)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def set_embedding(self, vector):
+        """Store embedding as JSON"""
+        import json
+        self.embedding = json.dumps(vector)
+
+    def get_embedding(self):
+        """Retrieve embedding as list"""
+        import json
+        return json.loads(self.embedding) if self.embedding else None
+
+    def set_metadata(self, data):
+        """Store metadata as JSON"""
+        import json
+        self.metadata = json.dumps(data)
+
+    def get_metadata(self):
+        """Retrieve metadata as dict"""
+        import json
+        return json.loads(self.metadata) if self.metadata else {}
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'document_id': self.document_id,
+            'chunk_index': self.chunk_index,
+            'content': self.content[:200] + '...' if len(self.content) > 200 else self.content,
+            'token_count': self.token_count,
+            'metadata': self.get_metadata()
+        }
+
+    def __repr__(self):
+        return f'<DocumentChunk {self.id} from Document {self.document_id}>'
+
+
+class Entity(db.Model):
+    """Extracted entity from knowledge graph"""
+    __tablename__ = 'entities'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(255), nullable=False)
+    entity_type = db.Column(db.String(50))  # person, organization, location, concept, etc.
+    description = db.Column(db.Text)
+    properties = db.Column(db.Text)  # JSON-serialized properties
+    source_chunks = db.Column(db.Text)  # JSON list of chunk IDs
+    mention_count = db.Column(db.Integer, default=1)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships for outgoing relations
+    outgoing_relations = db.relationship('Relation',
+                                        foreign_keys='Relation.source_entity_id',
+                                        backref='source_entity',
+                                        lazy=True,
+                                        cascade='all, delete-orphan')
+
+    # Relationships for incoming relations
+    incoming_relations = db.relationship('Relation',
+                                        foreign_keys='Relation.target_entity_id',
+                                        backref='target_entity',
+                                        lazy=True,
+                                        cascade='all, delete-orphan')
+
+    def set_properties(self, props):
+        """Store properties as JSON"""
+        import json
+        self.properties = json.dumps(props)
+
+    def get_properties(self):
+        """Retrieve properties as dict"""
+        import json
+        return json.loads(self.properties) if self.properties else {}
+
+    def set_source_chunks(self, chunks):
+        """Store source chunk IDs as JSON"""
+        import json
+        self.source_chunks = json.dumps(chunks)
+
+    def get_source_chunks(self):
+        """Retrieve source chunk IDs as list"""
+        import json
+        return json.loads(self.source_chunks) if self.source_chunks else []
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'type': self.entity_type,
+            'description': self.description,
+            'properties': self.get_properties(),
+            'mention_count': self.mention_count,
+            'created_at': self.created_at.isoformat()
+        }
+
+    def __repr__(self):
+        return f'<Entity {self.name} ({self.entity_type})>'
+
+
+class Relation(db.Model):
+    """Relationship between entities in knowledge graph"""
+    __tablename__ = 'relations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    source_entity_id = db.Column(db.Integer, db.ForeignKey('entities.id'), nullable=False)
+    target_entity_id = db.Column(db.Integer, db.ForeignKey('entities.id'), nullable=False)
+    relation_type = db.Column(db.String(100), nullable=False)  # works_for, located_in, etc.
+    properties = db.Column(db.Text)  # JSON-serialized additional properties
+    source_chunks = db.Column(db.Text)  # JSON list of chunk IDs where relation was found
+    confidence = db.Column(db.Float, default=1.0)  # Confidence score
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def set_properties(self, props):
+        """Store properties as JSON"""
+        import json
+        self.properties = json.dumps(props)
+
+    def get_properties(self):
+        """Retrieve properties as dict"""
+        import json
+        return json.loads(self.properties) if self.properties else {}
+
+    def set_source_chunks(self, chunks):
+        """Store source chunk IDs as JSON"""
+        import json
+        self.source_chunks = json.dumps(chunks)
+
+    def get_source_chunks(self):
+        """Retrieve source chunk IDs as list"""
+        import json
+        return json.loads(self.source_chunks) if self.source_chunks else []
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'source': self.source_entity_id,
+            'target': self.target_entity_id,
+            'type': self.relation_type,
+            'properties': self.get_properties(),
+            'confidence': self.confidence
+        }
+
+    def __repr__(self):
+        return f'<Relation {self.source_entity_id} -{self.relation_type}-> {self.target_entity_id}>'
+
+
 def init_db(app=None):
     """Initialize the database"""
     if app:
