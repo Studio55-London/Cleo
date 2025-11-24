@@ -5,9 +5,10 @@ Flask Backend with Spaces API
 import os
 import logging
 from datetime import datetime
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, redirect, url_for, session
 from flask_cors import CORS
-from models import db, Agent, Job, Activity, Space, Message
+from flask_login import LoginManager, login_user, logout_user, login_required, current_user
+from models import db, User, Agent, Job, Activity, Space, Message
 from agents import get_agent, list_agent_names, agent_count
 import json
 
@@ -32,6 +33,17 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 CORS(app)
 
+# Initialize Flask-Login
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+login_manager.login_message = 'Please log in to access this page.'
+
+@login_manager.user_loader
+def load_user(user_id):
+    """Load user by ID for Flask-Login"""
+    return db.session.get(User, int(user_id))
+
 # ===================================
 # Web Routes
 # ===================================
@@ -45,6 +57,157 @@ def index():
 def dashboard():
     """Legacy dashboard (if exists)"""
     return render_template('dashboard.html')
+
+# ===================================
+# API Routes - Authentication
+# ===================================
+
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    """Register a new user"""
+    try:
+        data = request.get_json()
+        username = data.get('username')
+        email = data.get('email')
+        password = data.get('password')
+        full_name = data.get('full_name', '')
+
+        if not username or not email or not password:
+            return jsonify({
+                'success': False,
+                'message': 'Username, email, and password are required'
+            }), 400
+
+        # Check if user already exists
+        if User.query.filter_by(username=username).first():
+            return jsonify({
+                'success': False,
+                'message': 'Username already exists'
+            }), 400
+
+        if User.query.filter_by(email=email).first():
+            return jsonify({
+                'success': False,
+                'message': 'Email already exists'
+            }), 400
+
+        # Create new user
+        user = User(username=username, email=email, full_name=full_name)
+        user.set_password(password)
+
+        db.session.add(user)
+        db.session.commit()
+
+        # Log the user in
+        login_user(user)
+        user.last_login = datetime.now()
+        db.session.commit()
+
+        logger.info(f"New user registered: {username}")
+
+        return jsonify({
+            'success': True,
+            'user': user.to_dict(),
+            'message': 'Registration successful'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Registration error: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    """Log in a user"""
+    try:
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
+
+        if not username or not password:
+            return jsonify({
+                'success': False,
+                'message': 'Username and password are required'
+            }), 400
+
+        # Find user
+        user = User.query.filter_by(username=username).first()
+
+        if not user or not user.check_password(password):
+            return jsonify({
+                'success': False,
+                'message': 'Invalid username or password'
+            }), 401
+
+        if not user.is_active:
+            return jsonify({
+                'success': False,
+                'message': 'Account is disabled'
+            }), 403
+
+        # Log the user in
+        login_user(user)
+        user.last_login = datetime.now()
+        db.session.commit()
+
+        logger.info(f"User logged in: {username}")
+
+        return jsonify({
+            'success': True,
+            'user': user.to_dict(),
+            'message': 'Login successful'
+        })
+
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+@login_required
+def logout():
+    """Log out the current user"""
+    try:
+        username = current_user.username
+        logout_user()
+        logger.info(f"User logged out: {username}")
+
+        return jsonify({
+            'success': True,
+            'message': 'Logout successful'
+        })
+
+    except Exception as e:
+        logger.error(f"Logout error: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/auth/me', methods=['GET'])
+@login_required
+def get_current_user():
+    """Get current logged-in user info"""
+    try:
+        return jsonify({
+            'success': True,
+            'user': current_user.to_dict()
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
 
 # ===================================
 # API Routes - Agents
@@ -487,7 +650,7 @@ def send_message(space_id):
 
 @app.route('/api/spaces/<space_id>/messages', methods=['GET'])
 def get_messages(space_id):
-    """Get all messages in a space"""
+    """Get messages in a space with pagination and search"""
     try:
         # Find space
         space = db.session.get(Space, int(space_id))
@@ -498,13 +661,49 @@ def get_messages(space_id):
                 'message': 'Space not found'
             }), 404
 
-        # Get messages from database
-        messages = Message.query.filter_by(space_id=int(space_id)).order_by(Message.timestamp).all()
-        messages_list = [msg.to_dict() for msg in messages]
+        # Get pagination parameters
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 50, type=int)
+        search = request.args.get('search', '', type=str)
+
+        # Validate pagination parameters
+        if page < 1:
+            page = 1
+        if per_page < 1 or per_page > 100:
+            per_page = 50
+
+        # Build query
+        query = Message.query.filter_by(space_id=int(space_id))
+
+        # Apply search filter if provided
+        if search:
+            search_pattern = f'%{search}%'
+            query = query.filter(
+                db.or_(
+                    Message.content.ilike(search_pattern),
+                    Message.author.ilike(search_pattern),
+                    Message.agent_name.ilike(search_pattern)
+                )
+            )
+
+        # Order by timestamp descending (newest first)
+        query = query.order_by(Message.timestamp.desc())
+
+        # Apply pagination
+        pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+        messages_list = [msg.to_dict() for msg in pagination.items]
 
         return jsonify({
             'success': True,
-            'messages': messages_list
+            'messages': messages_list,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': pagination.total,
+                'pages': pagination.pages,
+                'has_next': pagination.has_next,
+                'has_prev': pagination.has_prev
+            }
         })
 
     except Exception as e:

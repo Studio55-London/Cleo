@@ -19,6 +19,7 @@ O365>=2.0.30
 Flask>=3.0.0
 Flask-SQLAlchemy>=3.1.1
 Flask-CORS>=4.0.0
+Flask-Login>=0.6.3
 
 # Task Scheduling
 APScheduler>=3.10.4
