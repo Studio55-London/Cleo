@@ -14,18 +14,113 @@ class CleoSpaces {
     }
 
     async init() {
-        // Load agents and spaces
-        await this.loadAgents();
-        await this.loadSpaces();
+        try {
+            // Load agents and spaces
+            await this.loadAgents();
+            await this.loadSpaces();
 
-        // Setup event listeners
-        this.setupEventListeners();
+            // Setup event listeners
+            this.setupEventListeners();
 
-        // Auto-resize textarea
-        this.setupTextareaAutoResize();
+            // Auto-resize textarea
+            this.setupTextareaAutoResize();
 
-        // Setup right sidebar
-        this.setupRightSidebar();
+            // Setup right sidebar
+            this.setupRightSidebar();
+        } catch (error) {
+            console.error('Initialization error:', error);
+            this.showError('Failed to initialize application. Please refresh the page.');
+        }
+    }
+
+    // ===================================
+    // Error Handling
+    // ===================================
+
+    showError(message, duration = 5000) {
+        // Create error notification
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-notification';
+        errorDiv.textContent = message;
+        errorDiv.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #ef4444;
+            color: white;
+            padding: 16px 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 10000;
+            max-width: 400px;
+            animation: slideIn 0.3s ease;
+        `;
+
+        document.body.appendChild(errorDiv);
+
+        // Auto-remove after duration
+        setTimeout(() => {
+            errorDiv.style.animation = 'slideOut 0.3s ease';
+            setTimeout(() => errorDiv.remove(), 300);
+        }, duration);
+    }
+
+    showSuccess(message, duration = 3000) {
+        // Create success notification
+        const successDiv = document.createElement('div');
+        successDiv.className = 'success-notification';
+        successDiv.textContent = message;
+        successDiv.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #10b981;
+            color: white;
+            padding: 16px 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 10000;
+            max-width: 400px;
+            animation: slideIn 0.3s ease;
+        `;
+
+        document.body.appendChild(successDiv);
+
+        // Auto-remove after duration
+        setTimeout(() => {
+            successDiv.style.animation = 'slideOut 0.3s ease';
+            setTimeout(() => successDiv.remove(), 300);
+        }, duration);
+    }
+
+    async handleFetch(url, options = {}) {
+        try {
+            const response = await fetch(url, {
+                ...options,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...options.headers
+                }
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.message || `HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            if (!data.success) {
+                throw new Error(data.message || 'Operation failed');
+            }
+
+            return data;
+        } catch (error) {
+            console.error(`Fetch error for ${url}:`, error);
+            if (error.message.includes('Failed to fetch')) {
+                throw new Error('Network error. Please check your internet connection.');
+            }
+            throw error;
+        }
     }
 
     // ===================================

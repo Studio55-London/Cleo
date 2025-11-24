@@ -1,117 +1,195 @@
-# Agent-Cleo v2.0 - AI Agent Orchestration System
+# Cleo - AI Agent Workspace
 
-**Standalone Multi-Agent System | Claude AI | Privacy-Focused**
+**Modern AI Agent Collaboration Platform | Claude-Powered | 29 Specialized Agents**
 
-A sophisticated multi-agent AI orchestration system featuring 28 specialized agents organized in 4 tiers. Fully migrated from cloud-dependent platform to standalone, privacy-focused system with local data storage.
+Cleo is a sophisticated AI agent workspace featuring a modern, card-based interface where you can collaborate with 29 specialized AI agents across 5 tiers. Create unlimited Spaces for different projects, @mention agents for targeted expertise, and manage everything through an intuitive web interface.
 
-**Migration Status:** COMPLETE - All 28 agents operational (November 22, 2025)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Flask](https://img.shields.io/badge/flask-3.0+-green.svg)](https://flask.palletsprojects.com/)
+[![Claude](https://img.shields.io/badge/Claude-API-purple.svg)](https://www.anthropic.com/)
+
+![Cleo Dashboard](https://via.placeholder.com/800x400?text=Cleo+AI+Agent+Workspace)
 
 ---
 
 ## Features
 
-### Core Capabilities
-- **28 Specialized Agents** - Master, Personal, Team, Worker, and Expert agents
-- **Claude AI Integration** - Claude 3 Opus for intelligent, context-aware responses
-- **Conversation History** - Full context continuity across all interactions
-- **Local Data Storage** - SQLite database, no cloud dependencies
-- **Global Agent Registry** - Dynamic agent discovery and management
-- **Todoist Integration** - Task management (optional)
-- **Telegram Bot** - Mobile conversational interface (optional)
-- **Microsoft Graph Integration** - O365 calendar/email (optional)
-- **Web Dashboard** - Flask-based management console (foundation)
-- **Job Scheduling** - APScheduler for automated execution
+### Spaces - Collaborative Workspaces
+- **Create unlimited Spaces** for different projects, teams, or contexts
+- **Add multiple agents** to each Space for multi-agent collaboration
+- **@mention agents** to direct questions to specific expertise
+- **Full conversation history** with automatic context management
+- **Real-time messaging** with agent responses
 
-### Agent Tiers (4-Tier Architecture)
-1. **Master (1)**: Cleo - Strategic orchestrator coordinating all agents
-2. **Personal (2)**: Coach, HealthFit - Personal productivity and wellness
-3. **Team (6)**: DecideWright-MD, Studio55-MD, SparkwireMedia-MD, ThinTanks-MD, Ascendore-MD, Boxzero-MD
-4. **Worker (9)**: EA, Legal, CMO, CC, CCO, CPO, FD, CSO, SysAdmin - Tactical execution
-5. **Expert (11)**: RegTech, DataScience, CyberSecurity, ESG, AI-Ethics, FinancialModeling, MarketingStrategist, Copywriter, Designer, TechnicalWriter, StrategyRisk
+### Agent Library
+- **29 Specialized Agents** organized across 5 tiers
+- **Card-based interface** for easy agent discovery
+- **Filterable by tier**: Master, Personal, Team, Worker, Expert
+- **One-click agent selection** for adding to Spaces
+- **Agent profiles** showing specializations and capabilities
+
+### Integrations
+- **Todoist Integration** - Sync tasks and projects
+- **Telegram Bot** - Mobile conversational interface
+- **Extensible architecture** for custom integrations
+
+### Modern UI/UX
+- **Card-based design** with smooth animations
+- **Responsive layout** for desktop and mobile
+- **Intuitive navigation** with sidebar and breadcrumbs
+- **Clean, professional aesthetic** built with vanilla JavaScript
+- **No framework dependencies** - lightweight and fast
 
 ---
 
 ## Quick Start
 
 ### Prerequisites
-- Python 3.11+
-- Claude API key (required) - Get from https://console.anthropic.com/
-- Todoist account (optional)
-- Telegram account (optional)
-- Azure account (optional, for Microsoft Graph O365 integration)
+- Python 3.11 or higher
+- Claude API key from [Anthropic Console](https://console.anthropic.com/)
+- Git (for cloning the repository)
 
 ### Installation
 
-1. **Navigate to project**
+1. **Clone the repository**
    ```bash
-   cd C:\Users\AndrewSmart\Claude_Projects\Cleo
+   git clone https://github.com/Studio55-London/Cleo.git
+   cd Cleo
    ```
 
-2. **Activate virtual environment**
+2. **Create virtual environment**
    ```bash
-   .\venv\Scripts\activate  # Windows (already created)
+   # Windows
+   python -m venv venv
+   .\venv\Scripts\activate
+
+   # macOS/Linux
+   python3 -m venv venv
+   source venv/bin/activate
    ```
 
-3. **Verify installation** (dependencies already installed)
+3. **Install dependencies**
    ```bash
-   pip list | findstr anthropic
+   pip install -r requirements.txt
    ```
 
 4. **Configure environment**
-   - Edit `.env` file with your Claude API key
-   - API key is already configured from migration
-
-5. **Test all agents**
    ```bash
-   python test_all_agents.py
+   # Copy the example environment file
+   cp .env.example .env
+
+   # Edit .env and add your Claude API key
+   # ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
    ```
 
-6. **Run web application** (when ready)
+5. **Run the application**
    ```bash
    python app.py
+   ```
+
+6. **Open your browser**
+   ```
+   Navigate to http://localhost:8080
    ```
 
 ---
 
 ## Configuration
 
-### Required: Claude API
+### Required Environment Variables
+
+Create a `.env` file in the project root:
+
 ```bash
-# In .env file
-ANTHROPIC_API_KEY=sk-ant-api03-[your-key-here]
-CLAUDE_MODEL=claude-3-opus-20240229
+# Required: Claude API Configuration
+ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
+CLAUDE_MODEL=claude-3-5-sonnet-20241022
+
+# Optional: Flask Configuration
+SECRET_KEY=your-secret-key-change-in-production
+FLASK_ENV=development
+FLASK_DEBUG=True
+
+# Optional: Todoist Integration
+TODOIST_API_TOKEN=your-todoist-token
+
+# Optional: Telegram Integration
+TELEGRAM_BOT_TOKEN=your-bot-token
+TELEGRAM_CHAT_ID=your-chat-id
 ```
 
-Get API key from: https://console.anthropic.com/
+### Getting Your Claude API Key
+1. Visit [Anthropic Console](https://console.anthropic.com/)
+2. Sign up or log in
+3. Navigate to API Keys section
+4. Create a new API key
+5. Copy the key and add to your `.env` file
 
-### Optional: Todoist Integration
-```bash
-# In .env file
-TODOIST_API_TOKEN=[your-token]
+### Optional Integrations
+
+**Todoist Setup:**
+1. Visit [Todoist Integrations](https://todoist.com/app/settings/integrations/developer)
+2. Generate an API token
+3. Add to `.env` file
+
+**Telegram Bot Setup:**
+1. Message [@BotFather](https://t.me/botfather) on Telegram
+2. Use `/newbot` command and follow instructions
+3. Save your bot token to `.env` file
+
+---
+
+## Architecture
+
+### 5-Tier Agent System
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   MASTER TIER (1)                       │
+│                     Agent-Cleo                          │
+│              Strategic Orchestration                    │
+└────────────────────────┬────────────────────────────────┘
+                         │
+          ┌──────────────┴───────────────┐
+          │                              │
+┌─────────▼─────────┐          ┌────────▼────────────────┐
+│  PERSONAL (2)     │          │     TEAM TIER (6)       │
+│  - Coach          │          │  Managing Directors     │
+│  - HealthFit      │          │  - DecideWright-MD      │
+│                   │          │  - Studio55-MD          │
+└───────────────────┘          │  - SparkwireMedia-MD    │
+                               │  - ThinTanks-MD         │
+                               │  - Ascendore-MD         │
+                               │  - BoxZero-MD           │
+                               └─────────┬───────────────┘
+                                         │
+                          ┌──────────────┴──────────────┐
+                          │                             │
+                  ┌───────▼────────┐          ┌────────▼──────────┐
+                  │  WORKER (9)    │          │   EXPERT (10)     │
+                  │  Execution     │◄────────►│   Consultation    │
+                  │  Specialists   │          │   Specialists     │
+                  └────────────────┘          └───────────────────┘
 ```
 
-Get token from: https://todoist.com/app/settings/integrations/developer
+### Technology Stack
 
-### Optional: Telegram Bot
-```bash
-# In .env file
-TELEGRAM_BOT_TOKEN=[your-token]
-TELEGRAM_CHAT_ID=[your-chat-id]
-```
+**Backend:**
+- **Flask 3.0+** - Web framework
+- **SQLAlchemy** - ORM for database management
+- **SQLite** - Local database storage
+- **Anthropic Claude API** - AI agent intelligence
 
-Setup: Message @BotFather on Telegram, use `/newbot` command
+**Frontend:**
+- **Vanilla JavaScript** - No framework dependencies
+- **Modern CSS** - Custom design system with CSS variables
+- **HTML5** - Semantic markup
 
-### Optional: Microsoft Graph (O365)
-```bash
-# In .env file
-GRAPH_CLIENT_ID=[your-client-id]
-GRAPH_CLIENT_SECRET=[your-secret]
-GRAPH_TENANT_ID=[your-tenant-id]
-GRAPH_USER_EMAIL=[your-email]
-```
-
-Setup: Azure Portal → App registrations → New registration
-Permissions needed: Mail.Read, Mail.Send, Calendars.ReadWrite
+**Architecture Patterns:**
+- **Agent Registry Pattern** - Dynamic agent discovery
+- **Repository Pattern** - Database abstraction
+- **MVC Pattern** - Clean separation of concerns
 
 ---
 
@@ -119,280 +197,383 @@ Permissions needed: Mail.Read, Mail.Send, Calendars.ReadWrite
 
 ```
 Cleo/
-├── agents/                     # 28 agent implementations
-│   ├── __init__.py            # Global agent registry
-│   ├── master/                # Master tier (1 agent)
-│   │   └── cleo.py           # Strategic orchestrator
-│   ├── personal/              # Personal tier (2 agents)
-│   │   ├── coach.py          # Personal development coach
-│   │   └── healthfit.py      # Health & fitness coach
-│   ├── team/                  # Team tier (6 Managing Directors)
-│   │   ├── decidewright.py   # Risk/Analytics/ESG business
-│   │   ├── studio55.py       # Digital/Tech/Creative business
-│   │   ├── sparkwiremedia.py # Media/Content/Wellness business
-│   │   ├── thintanks.py      # Research/Advisory business
-│   │   ├── ascendore.py      # Strategic initiatives
-│   │   └── boxzero.py        # Innovation & ventures
-│   ├── worker/                # Worker tier (9 specialists)
-│   │   ├── agent_ea.py       # Executive Assistant
-│   │   ├── agent_legal.py    # Legal Advisor
-│   │   ├── agent_cmo.py      # Marketing Officer
-│   │   ├── agent_cc.py       # Content Creator
-│   │   ├── agent_cco.py      # Consultancy Officer
-│   │   ├── agent_cpo.py      # Product Officer
-│   │   ├── agent_fd.py       # Finance Director
-│   │   ├── agent_cso.py      # Sales Officer
-│   │   └── agent_sysadmin.py # Systems Administrator
-│   └── expert/                # Expert tier (11 specialists)
-│       ├── expert_regtech.py
-│       ├── expert_datascience.py
-│       ├── expert_cybersecurity.py
-│       ├── expert_esg.py
+├── agents/                         # Agent implementations
+│   ├── __init__.py                # Global agent registry
+│   ├── master/                    # Master orchestrator (1)
+│   │   ├── __init__.py
+│   │   └── cleo.py
+│   ├── personal/                  # Personal agents (2)
+│   │   ├── __init__.py
+│   │   ├── coach.py
+│   │   └── healthfit.py
+│   ├── team/                      # Team managing directors (6)
+│   │   ├── __init__.py
+│   │   ├── ascendore.py
+│   │   ├── boxzero.py
+│   │   ├── decidewright.py
+│   │   ├── sparkwiremedia.py
+│   │   ├── studio55.py
+│   │   └── thintanks.py
+│   ├── worker/                    # Worker specialists (9)
+│   │   ├── __init__.py
+│   │   ├── agent_cc.py           # Content Creator
+│   │   ├── agent_cco.py          # Consultancy Officer
+│   │   ├── agent_cmo.py          # Marketing Officer
+│   │   ├── agent_cpo.py          # Product Officer
+│   │   ├── agent_cso.py          # Sales Officer
+│   │   ├── agent_ea.py           # Executive Assistant
+│   │   ├── agent_fd.py           # Finance Director
+│   │   ├── agent_legal.py        # Legal Advisor
+│   │   └── agent_sysadmin.py     # Systems Admin
+│   └── expert/                    # Expert consultants (10)
+│       ├── __init__.py
 │       ├── expert_ai_ethics.py
+│       ├── expert_copywriter.py
+│       ├── expert_cybersecurity.py
+│       ├── expert_datascience.py
+│       ├── expert_designer.py
+│       ├── expert_esg.py
 │       ├── expert_financialmodeling.py
 │       ├── expert_marketingstrategist.py
-│       ├── expert_copywriter.py
-│       ├── expert_designer.py
-│       ├── expert_technicalwriter.py
-│       └── expert_strategyrisk.py
-├── integrations/              # External API integrations
-│   ├── claude_provider.py    # Claude API wrapper
-│   ├── todoist_integration.py
-│   └── telegram_integration.py
-├── config/                    # Configuration
-│   └── settings.py           # Environment configuration
-├── static/                    # Web dashboard assets
+│       ├── expert_regtech.py
+│       ├── expert_strategyrisk.py
+│       └── expert_technicalwriter.py
+├── integrations/                   # External API integrations
+│   ├── __init__.py
+│   └── claude_provider.py         # Claude API client
+├── static/                         # Frontend assets
 │   ├── css/
-│   ├── js/
-│   └── images/
-├── templates/                 # Flask HTML templates
-│   ├── dashboard.html
-│   ├── agents.html
-│   └── jobs.html
-├── models.py                  # SQLite database models
-├── app.py                     # Flask web application
-├── requirements.txt           # Python dependencies
-├── .env                       # Environment variables (API keys)
-├── agents.db                  # SQLite database
-├── test_all_agents.py        # Comprehensive test suite
-├── create_team_mds.py        # Team MD generator script
-├── create_all_remaining_agents.py  # Worker+Expert generator
-├── MIGRATION_COMPLETE.md     # Complete migration report
-├── AGENTS_GUIDE.md           # Agent usage guide
-└── README.md                 # This file
+│   │   └── spaces.css             # Main stylesheet
+│   └── js/
+│       └── spaces.js              # Application logic
+├── templates/                      # HTML templates
+│   └── spaces.html                # Main Spaces interface
+├── app.py                         # Flask application
+├── models.py                      # Database models
+├── requirements.txt               # Python dependencies
+├── .env.example                   # Environment template
+├── .gitignore                     # Git ignore rules
+└── README.md                      # This file
 ```
 
 ---
 
 ## Usage
 
-### Testing All Agents
-```bash
-# Run comprehensive test suite
-python test_all_agents.py
+### Creating a Space
 
-# Output shows:
-# - All 28 agent imports
-# - Registry status (29 agents)
-# - Live Claude API test responses
+1. Click the **"+ New Space"** button in the sidebar
+2. Enter a name and description for your Space
+3. Select agents to add to the Space
+4. Click **"Create Space"** to confirm
+
+### Working with Agents
+
+**Direct Messaging:**
+```
+Type your message in the input field and press Enter
+The first agent in the Space will respond
 ```
 
-### Working with Individual Agents
-```python
-# Example 1: Talk to Cleo (Master Orchestrator)
-from agents.master import cleo
-
-response = cleo.run("What should be our Q1 priorities?")
-print(response)
-
-# Example 2: Personal coaching with Coach
-from agents.personal import coach
-
-response = coach.run("""
-Let's set my weekly goals. I want to focus on:
-1. Complete product roadmap
-2. Record 3 podcast episodes
-3. Client meetings for 2 prospects
-""")
-print(response)
-
-# Example 3: Team MD delegation
-from agents.team import decidewright
-
-response = decidewright.run("""
-Agent-CMO, create a go-to-market strategy for our
-new risk analytics product.
-""")
-print(response)
-
-# Example 4: Expert consultation
-from agents.expert import datascience
-
-response = datascience.run("""
-Analyze customer churn patterns in our dataset.
-Recommend predictive models we should implement.
-""")
-print(response)
+**@Mentioning Specific Agents:**
+```
+@Coach help me set my weekly goals
+@Studio55 what's the status of our web project?
+@DataScience analyze this dataset...
 ```
 
-### Multi-Agent Coordination
-```python
-from agents.master import cleo
-from agents.team import decidewright, studio55, sparkwiremedia
-
-# Strategic alignment through Cleo
-strategy = cleo.run("""
-We're launching a new AI-powered ESG analytics product.
-Coordinate DecideWright, Studio55, and SparkwireMedia.
-""")
-
-# Each MD executes their part
-analytics = decidewright.run("Build the analytics engine")
-platform = studio55.run("Build the technology platform")
-marketing = sparkwiremedia.run("Create marketing strategy")
+**Multi-Agent Collaboration:**
+```
+@Cleo coordinate with @Studio55 and @CMO to launch our new product
 ```
 
-### Web Dashboard (Foundation)
-```bash
-# Start Flask server
-python app.py
+### Managing Spaces
 
-# Access at http://localhost:5000
-# Note: Dashboard frontend is in foundation stage
-```
+- **Switch Spaces**: Click on any Space in the sidebar
+- **Edit Space**: Click the edit icon next to the Space name
+- **Delete Space**: Click the delete icon (with confirmation)
+- **Add/Remove Agents**: Edit the Space and modify agent list
+
+### Using the Agent Library
+
+1. Click **"Agents"** in the left sidebar
+2. Browse agents by tier (Master, Personal, Team, Worker, Expert)
+3. Click on any agent card to view details
+4. Add agents to Spaces from their profile
+
+### Using Integrations
+
+1. Click **"Integrations"** in the left sidebar
+2. View available integrations (Todoist, Telegram)
+3. Click **"Configure"** to set up an integration
+4. Follow the on-screen instructions
 
 ---
 
-## Architecture
+## API Documentation
 
-### 4-Tier Agent Hierarchy
-```
-┌─────────────────────────────────────────────────────────┐
-│                  MASTER TIER (1)                        │
-│                    Agent-Cleo                           │
-│            Strategic Orchestration                      │
-└───────────────────┬─────────────────────────────────────┘
-                    │
-        ┌───────────┴───────────┐
-        │                       │
-┌───────▼──────────┐    ┌──────▼───────────────────────┐
-│  PERSONAL (2)    │    │      TEAM TIER (6)           │
-│  - Coach         │    │  Team Managing Directors     │
-│  - HealthFit     │    │  - DecideWright-MD           │
-└──────────────────┘    │  - Studio55-MD               │
-                        │  - SparkwireMedia-MD         │
-                        │  - ThinTanks-MD              │
-                        │  - Ascendore-MD              │
-                        │  - Boxzero-MD                │
-                        └──────┬───────────────────────┘
-                               │
-                ┌──────────────┴───────────────┐
-                │                              │
-        ┌───────▼─────────┐          ┌────────▼──────────┐
-        │  WORKER (9)     │          │   EXPERT (11)     │
-        │  Execution      │◄────────►│   Consultation    │
-        │  Specialists    │          │   Specialists     │
-        └─────────────────┘          └───────────────────┘
-```
+### REST API Endpoints
 
-### System Integration
-```
-┌─────────────────────────────────────────────────────────┐
-│                Agent-Cleo v2.0 System                   │
-│  ┌────────────────────────────────────────────────┐    │
-│  │  Agent Layer (28 Agents)                       │    │
-│  │  - ClaudeAgent base class                      │    │
-│  │  - Conversation history tracking               │    │
-│  │  - Global agent registry                       │    │
-│  └──────────┬──────────────────────────────────────┘    │
-│             │                                             │
-│             ├─→ Claude API (Anthropic)                   │
-│             ├─→ SQLite Database (local)                  │
-│             ├─→ Todoist API (optional)                   │
-│             ├─→ Telegram Bot API (optional)              │
-│             └─→ Microsoft Graph/O365 (optional)          │
-└─────────────────────────────────────────────────────────┘
-```
+**Agents:**
+- `GET /api/agents` - List all agents
+- `GET /api/agents/<name>` - Get agent details
+
+**Spaces:**
+- `GET /api/spaces` - List all spaces
+- `POST /api/spaces` - Create new space
+- `GET /api/spaces/<id>` - Get space details
+- `PUT /api/spaces/<id>` - Update space
+- `DELETE /api/spaces/<id>` - Delete space
+
+**Space Agents:**
+- `POST /api/spaces/<id>/agents` - Add agents to space
+- `DELETE /api/spaces/<id>/agents/<agent_id>` - Remove agent from space
+
+**Messages:**
+- `GET /api/spaces/<id>/messages` - Get messages
+- `POST /api/spaces/<id>/messages` - Send message
+
+**System:**
+- `GET /api/status` - System health check
 
 ---
 
 ## Development
 
-### Running Tests
-```bash
-# Comprehensive test suite
-python test_all_agents.py
+### Running in Development Mode
 
-# Individual agent tests
-python agents/master/cleo.py
-python agents/team/decidewright.py
+```bash
+# Activate virtual environment
+source venv/bin/activate  # or .\venv\Scripts\activate on Windows
+
+# Set Flask environment
+export FLASK_ENV=development
+export FLASK_DEBUG=True
+
+# Run the application
+python app.py
+```
+
+### Database Management
+
+```python
+# Initialize database
+from app import app, db
+with app.app_context():
+    db.create_all()
+
+# Reset database
+with app.app_context():
+    db.drop_all()
+    db.create_all()
 ```
 
 ### Adding a New Agent
-1. Create file in appropriate `agents/` tier directory
-2. Use existing agent as template
-3. Define agent with ClaudeAgent class
-4. Register in tier's `__init__.py`
-5. Test with direct execution
 
-Example:
+1. Create agent file in appropriate tier directory:
 ```python
+# agents/expert/expert_newagent.py
 from integrations.claude_provider import ClaudeAgent
 from agents import register_agent
 
-INSTRUCTIONS = """You are Agent-NewAgent..."""
+INSTRUCTIONS = """
+You are Agent-NewAgent, a specialized expert in...
+"""
 
 newagent = ClaudeAgent(
     name="NewAgent",
     instructions=INSTRUCTIONS,
-    tools=None,
-    model=None
+    agent_type="expert"
 )
 
-register_agent("NewAgent", newagent)
+register_agent("newagent", newagent)
+```
+
+2. Import in tier's `__init__.py`:
+```python
+from .expert_newagent import newagent
+```
+
+3. Add to database seed in `models.py`
+
+### Running Tests
+
+```bash
+# Run all tests
+python -m pytest
+
+# Run specific test file
+python test_agents.py
 ```
 
 ---
 
-## Migration from Agent-Cleo v1
+## Deployment
 
-This is a complete rebuild of the original Agent-Cleo system:
+### Production Checklist
 
-**What Changed:**
-- Platform: Overlord cloud → Standalone local system
-- Database: PostgreSQL/Supabase → SQLite
-- LLM: Custom orchestration → Direct Claude API integration
-- Privacy: Cloud-dependent → Local data storage
-- Architecture: Cloud platform → Microsoft Agent Framework patterns
+- [ ] Set `FLASK_ENV=production` in `.env`
+- [ ] Generate secure `SECRET_KEY`
+- [ ] Use production-grade WSGI server (Gunicorn)
+- [ ] Set up HTTPS/SSL certificates
+- [ ] Configure database backups
+- [ ] Set up monitoring and logging
+- [ ] Review and harden security settings
 
-**What Stayed:**
-- All 28 agents and their personalities
-- 4-tier organizational hierarchy
-- Business unit coverage
-- Integration capabilities (Todoist, Telegram, O365)
+### Docker Deployment
 
-**Migration Status:** COMPLETE (November 22, 2025)
-**Success Rate:** 100% (28/28 agents operational)
+```dockerfile
+# Dockerfile example
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY . .
+EXPOSE 8080
+CMD ["gunicorn", "-b", "0.0.0.0:8080", "app:app"]
+```
 
-See `MIGRATION_COMPLETE.md` for full migration report.
+```bash
+# Build and run
+docker build -t cleo .
+docker run -p 8080:8080 --env-file .env cleo
+```
+
+### Heroku Deployment
+
+```bash
+# Create Procfile
+echo "web: gunicorn app:app" > Procfile
+
+# Deploy
+heroku create your-cleo-app
+heroku config:set ANTHROPIC_API_KEY=your-key
+git push heroku master
+```
 
 ---
 
-## Documentation
+## Troubleshooting
 
-- **README.md** (this file) - Quick start and overview
-- **MIGRATION_COMPLETE.md** - Complete migration report
-- **AGENTS_GUIDE.md** - Comprehensive agent usage guide
-- **AGENT_MIGRATION_PHASE1.md** - Phase 1 migration details
-- **AGENT_MIGRATION_PHASE2.md** - Phase 2 migration details
-- **test_all_agents.py** - Test suite with examples
+### Common Issues
+
+**Issue: "Module not found" error**
+```bash
+# Solution: Ensure virtual environment is activated
+source venv/bin/activate  # or .\venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+**Issue: "Database locked" error**
+```bash
+# Solution: Close all connections and restart
+rm agents.db
+python app.py
+```
+
+**Issue: "Claude API error"**
+```bash
+# Solution: Check your API key and quota
+# Verify in .env file
+# Check https://console.anthropic.com/
+```
+
+**Issue: Agents not loading**
+```bash
+# Solution: Check agent imports
+python -c "from agents import agent_count; print(f'{agent_count()} agents loaded')"
+```
 
 ---
 
-## License & Credits
+## Contributing
+
+We welcome contributions! Please follow these guidelines:
+
+1. **Fork the repository**
+2. **Create a feature branch** (`git checkout -b feature/amazing-feature`)
+3. **Commit your changes** (`git commit -m 'Add amazing feature'`)
+4. **Push to the branch** (`git push origin feature/amazing-feature`)
+5. **Open a Pull Request**
+
+### Code Style
+- Follow PEP 8 for Python code
+- Use meaningful variable names
+- Add docstrings to functions
+- Keep functions focused and small
+
+### Commit Messages
+- Use present tense ("Add feature" not "Added feature")
+- Use imperative mood ("Move cursor to..." not "Moves cursor to...")
+- Reference issues and pull requests
+
+---
+
+## Roadmap
+
+### v2.1 - Enhanced Agent Capabilities
+- [ ] Advanced prompt engineering for each agent
+- [ ] Context-aware agent responses
+- [ ] Agent personality refinement
+- [ ] File upload support
+
+### v2.2 - Advanced Integrations
+- [ ] Microsoft Graph/O365 integration
+- [ ] Slack integration
+- [ ] Google Calendar integration
+- [ ] Custom webhook support
+
+### v2.3 - Collaboration Features
+- [ ] Multi-user support
+- [ ] Shared Spaces
+- [ ] User permissions
+- [ ] Activity feed
+
+### v3.0 - Enterprise Features
+- [ ] Team workspaces
+- [ ] Admin dashboard
+- [ ] Usage analytics
+- [ ] API rate limiting
+- [ ] SSO authentication
+
+---
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## Credits
 
 **Version:** 2.0
-**Status:** Production Ready (Migration Complete)
-**Built by:** DecideWright Ltd.
+**Built by:** [Studio55 London](https://studio55.london)
 **Owner:** Andrew Smart
 **Technology:** Claude AI, Python, Flask, SQLite
+
+### Powered By
+- [Anthropic Claude](https://www.anthropic.com/) - AI Agent Intelligence
+- [Flask](https://flask.palletsprojects.com/) - Web Framework
+- [SQLAlchemy](https://www.sqlalchemy.org/) - Database ORM
+
+---
+
+## Support
+
+For support, please:
+- Open an [issue on GitHub](https://github.com/Studio55-London/Cleo/issues)
+- Check the [documentation](https://github.com/Studio55-London/Cleo/wiki)
+- Contact: [andrew@studio55.london](mailto:andrew@studio55.london)
+
+---
+
+## Acknowledgments
+
+Special thanks to:
+- Anthropic for the Claude AI platform
+- The Flask community for excellent documentation
+- All contributors to this project
+
+---
+
+**Ready to get started?** Follow the [Quick Start](#quick-start) guide above!

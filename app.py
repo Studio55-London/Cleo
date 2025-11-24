@@ -3,12 +3,24 @@ Cleo - AI Agent Workspace Application
 Flask Backend with Spaces API
 """
 import os
+import logging
 from datetime import datetime
 from flask import Flask, render_template, jsonify, request
 from flask_cors import CORS
 from models import db, Agent, Job, Activity, Space, Message
 from agents import get_agent, list_agent_names, agent_count
 import json
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('data/cleo.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -529,18 +541,38 @@ def get_status():
 
 @app.errorhandler(404)
 def not_found(error):
+    logger.warning(f"404 Not Found: {request.url}")
     return jsonify({
         'success': False,
-        'message': 'Resource not found'
+        'message': 'Resource not found',
+        'error': 'NOT_FOUND'
     }), 404
 
 @app.errorhandler(500)
 def internal_error(error):
-    app.logger.error(f"Internal error: {error}")
+    logger.error(f"500 Internal Error: {error}", exc_info=True)
+    db.session.rollback()  # Rollback any failed database transactions
     return jsonify({
         'success': False,
-        'message': 'Internal server error'
+        'message': 'Internal server error. Please try again.',
+        'error': 'INTERNAL_ERROR'
     }), 500
+
+@app.errorhandler(Exception)
+def handle_exception(error):
+    """Handle uncaught exceptions"""
+    logger.error(f"Unhandled exception: {error}", exc_info=True)
+    db.session.rollback()
+
+    # Return JSON for API requests, HTML for web requests
+    if request.path.startswith('/api/'):
+        return jsonify({
+            'success': False,
+            'message': 'An unexpected error occurred',
+            'error': 'UNEXPECTED_ERROR'
+        }), 500
+    else:
+        return render_template('error.html', error=str(error)), 500
 
 # ===================================
 # Helper Functions

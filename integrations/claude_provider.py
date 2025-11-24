@@ -2,16 +2,24 @@
 Claude Provider for Microsoft Agent Framework
 Integrates Anthropic Claude API with Agent Framework
 """
-from anthropic import Anthropic, AsyncAnthropic
+from anthropic import Anthropic, AsyncAnthropic, APIError, APIConnectionError, RateLimitError
 from typing import List, Dict, Any, Optional
 import os
 import sys
+import logging
 from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config.settings import ANTHROPIC_API_KEY, CLAUDE_MODEL, AGENT_CONFIG
+
+# Configure logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 
 class ClaudeProvider:
@@ -212,30 +220,59 @@ class ClaudeAgent:
         Returns:
             Agent response text
         """
-        # Add user message to history
-        self.messages.append({
-            'role': 'user',
-            'content': input_text
-        })
+        try:
+            # Add user message to history
+            self.messages.append({
+                'role': 'user',
+                'content': input_text
+            })
 
-        # Call Claude API
-        response = self.provider.create_message(
-            messages=self.messages,
-            system=self.instructions,
-            tools=self.tools if self.tools else None,
-            temperature=self.temperature
-        )
+            logger.info(f"[{self.name}] Processing user input: {input_text[:50]}...")
 
-        # Extract assistant response
-        assistant_message = response.content[0].text
+            # Call Claude API
+            response = self.provider.create_message(
+                messages=self.messages,
+                system=self.instructions,
+                tools=self.tools if self.tools else None,
+                temperature=self.temperature
+            )
 
-        # Add to history
-        self.messages.append({
-            'role': 'assistant',
-            'content': assistant_message
-        })
+            # Extract assistant response
+            assistant_message = response.content[0].text
 
-        return assistant_message
+            # Add to history
+            self.messages.append({
+                'role': 'assistant',
+                'content': assistant_message
+            })
+
+            logger.info(f"[{self.name}] Successfully generated response")
+            return assistant_message
+
+        except RateLimitError as e:
+            logger.error(f"[{self.name}] Rate limit exceeded: {e}")
+            # Remove the user message from history since we failed
+            if self.messages and self.messages[-1]['role'] == 'user':
+                self.messages.pop()
+            return "I'm experiencing high demand right now. Please try again in a moment."
+
+        except APIConnectionError as e:
+            logger.error(f"[{self.name}] Connection error: {e}")
+            if self.messages and self.messages[-1]['role'] == 'user':
+                self.messages.pop()
+            return "I'm having trouble connecting to my AI service. Please check your internet connection and try again."
+
+        except APIError as e:
+            logger.error(f"[{self.name}] API error: {e}")
+            if self.messages and self.messages[-1]['role'] == 'user':
+                self.messages.pop()
+            return f"I encountered an error while processing your request: {str(e)}"
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Unexpected error: {e}", exc_info=True)
+            if self.messages and self.messages[-1]['role'] == 'user':
+                self.messages.pop()
+            return "I encountered an unexpected error. Please try again."
 
     async def run_async(self, input_text: str, context: Dict = None) -> str:
         """
