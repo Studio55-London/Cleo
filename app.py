@@ -169,7 +169,7 @@ def get_space(space_id):
     """Get a specific space with messages"""
     try:
         # Find space
-        space = Space.query.get(int(space_id))
+        space = db.session.get(Space, int(space_id))
 
         if not space:
             return jsonify({
@@ -200,7 +200,7 @@ def update_space(space_id):
         data = request.get_json()
 
         # Find space
-        space = Space.query.get(int(space_id))
+        space = db.session.get(Space, int(space_id))
 
         if not space:
             return jsonify({
@@ -214,7 +214,7 @@ def update_space(space_id):
         if 'description' in data:
             space.description = data['description']
 
-        space.updated_at = datetime.utcnow()
+        space.updated_at = datetime.now()
 
         db.session.commit()
 
@@ -235,7 +235,7 @@ def delete_space(space_id):
     """Delete a space"""
     try:
         # Find space
-        space = Space.query.get(int(space_id))
+        space = db.session.get(Space, int(space_id))
 
         if not space:
             return jsonify({
@@ -271,7 +271,7 @@ def add_agents_to_space(space_id):
         agent_ids = data.get('agent_ids', [])
 
         # Find space
-        space = Space.query.get(int(space_id))
+        space = db.session.get(Space, int(space_id))
 
         if not space:
             return jsonify({
@@ -286,13 +286,13 @@ def add_agents_to_space(space_id):
         for agent_id in agent_ids:
             if int(agent_id) not in existing_ids:
                 # Verify agent exists
-                agent = Agent.query.get(int(agent_id))
+                agent = db.session.get(Agent, int(agent_id))
                 if agent:
                     existing_ids.append(int(agent_id))
 
         # Update space
         space.set_agents(existing_ids)
-        space.updated_at = datetime.utcnow()
+        space.updated_at = datetime.now()
 
         db.session.commit()
 
@@ -313,7 +313,7 @@ def remove_agent_from_space(space_id, agent_id):
     """Remove an agent from a space"""
     try:
         # Find space
-        space = Space.query.get(int(space_id))
+        space = db.session.get(Space, int(space_id))
 
         if not space:
             return jsonify({
@@ -327,7 +327,7 @@ def remove_agent_from_space(space_id, agent_id):
 
         # Update space
         space.set_agents(agent_ids)
-        space.updated_at = datetime.utcnow()
+        space.updated_at = datetime.now()
 
         db.session.commit()
 
@@ -362,7 +362,7 @@ def send_message(space_id):
             }), 400
 
         # Find space
-        space = Space.query.get(int(space_id))
+        space = db.session.get(Space, int(space_id))
 
         if not space:
             return jsonify({
@@ -490,7 +490,7 @@ def get_messages(space_id):
     """Get all messages in a space"""
     try:
         # Find space
-        space = Space.query.get(int(space_id))
+        space = db.session.get(Space, int(space_id))
 
         if not space:
             return jsonify({
