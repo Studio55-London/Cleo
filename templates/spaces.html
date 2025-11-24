@@ -56,6 +56,20 @@
                 </button>
             </div>
 
+            <!-- Knowledge Section -->
+            <div class="knowledge-section">
+                <button class="section-header-btn" id="view-knowledge-btn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                    </svg>
+                    <span>Knowledge</span>
+                    <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 18l6-6-6-6"/>
+                    </svg>
+                </button>
+            </div>
+
             <!-- Integrations Section -->
             <div class="integrations-section">
                 <button class="section-header-btn" id="view-integrations-btn">
@@ -271,6 +285,74 @@
                                         <button class="btn-secondary btn-sm">Configure</button>
                                         <button class="btn-text btn-sm">Disconnect</button>
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Knowledge Library -->
+                    <div class="knowledge-library" id="knowledge-library" style="display: none;">
+                        <div class="library-header">
+                            <h1>Knowledge Base</h1>
+                            <p class="library-subtitle">Upload and manage documents with GraphRAG-powered search</p>
+                        </div>
+
+                        <!-- Upload Section -->
+                        <div class="knowledge-group">
+                            <div class="group-header">
+                                <h2>Upload Documents</h2>
+                            </div>
+                            <div class="upload-section">
+                                <div class="upload-area" id="upload-area">
+                                    <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                        <polyline points="17 8 12 3 7 8"/>
+                                        <line x1="12" y1="3" x2="12" y2="15"/>
+                                    </svg>
+                                    <h3>Drop files here or click to browse</h3>
+                                    <p>Supports PDF, DOCX, TXT, MD, and more</p>
+                                    <input type="file" id="file-input" multiple accept=".pdf,.docx,.doc,.txt,.md" style="display: none;">
+                                    <button class="btn-primary" id="browse-files-btn">Browse Files</button>
+                                </div>
+                                <div class="upload-options">
+                                    <button class="btn-secondary" id="scan-folder-btn">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                                        </svg>
+                                        Scan Folder
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Documents List -->
+                        <div class="knowledge-group">
+                            <div class="group-header">
+                                <h2>Your Documents</h2>
+                                <span class="document-count" id="document-count">0</span>
+                            </div>
+                            <div class="documents-list" id="documents-list">
+                                <p class="placeholder-text">No documents uploaded yet</p>
+                            </div>
+                        </div>
+
+                        <!-- Knowledge Graph Stats -->
+                        <div class="knowledge-group">
+                            <div class="group-header">
+                                <h2>Knowledge Graph</h2>
+                            </div>
+                            <div class="knowledge-stats">
+                                <div class="stat-card">
+                                    <div class="stat-value" id="stat-chunks">0</div>
+                                    <div class="stat-label">Text Chunks</div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="stat-value" id="stat-entities">0</div>
+                                    <div class="stat-label">Entities</div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="stat-value" id="stat-relations">0</div>
+                                    <div class="stat-label">Relations</div>
                                 </div>
                             </div>
                         </div>

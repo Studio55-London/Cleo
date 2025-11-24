@@ -402,6 +402,11 @@ class CleoSpaces {
             this.showIntegrationsLibrary();
         });
 
+        // View Knowledge button
+        document.getElementById('view-knowledge-btn')?.addEventListener('click', () => {
+            this.showKnowledgeLibrary();
+        });
+
         // Add Agent button
         document.getElementById('add-agent-btn')?.addEventListener('click', () => {
             this.showAddAgentModal();
@@ -1234,6 +1239,7 @@ class CleoSpaces {
         // Hide all other content
         document.getElementById('welcome-state').style.display = 'none';
         document.getElementById('agent-library').style.display = 'none';
+        document.getElementById('knowledge-library').style.display = 'none';
         document.getElementById('input-area').style.display = 'none';
 
         // Hide message list
@@ -1256,6 +1262,213 @@ class CleoSpaces {
         if (rightSidebar) {
             rightSidebar.classList.add('collapsed');
         }
+    }
+
+    // ===================================
+    // Knowledge Library
+    // ===================================
+
+    showKnowledgeLibrary() {
+        // Hide all other content
+        document.getElementById('welcome-state').style.display = 'none';
+        document.getElementById('agent-library').style.display = 'none';
+        document.getElementById('integrations-library').style.display = 'none';
+        document.getElementById('input-area').style.display = 'none';
+
+        // Hide message list
+        const messageList = document.querySelector('.message-list');
+        if (messageList) messageList.style.display = 'none';
+
+        // Show knowledge library
+        const knowledgeLibrary = document.getElementById('knowledge-library');
+        knowledgeLibrary.style.display = 'block';
+
+        // Update header
+        document.getElementById('space-title').textContent = 'Knowledge Base';
+        document.getElementById('space-meta').style.display = 'none';
+
+        // Clear current space
+        this.currentSpace = null;
+
+        // Collapse right sidebar (not in a space)
+        const rightSidebar = document.getElementById('right-sidebar');
+        if (rightSidebar) {
+            rightSidebar.classList.add('collapsed');
+        }
+
+        // Setup upload handlers
+        this.setupFileUpload();
+
+        // Load documents
+        this.loadDocuments();
+    }
+
+    setupFileUpload() {
+        const uploadArea = document.getElementById('upload-area');
+        const fileInput = document.getElementById('file-input');
+        const browseBtn = document.getElementById('browse-files-btn');
+        const scanFolderBtn = document.getElementById('scan-folder-btn');
+
+        // Browse files button
+        if (browseBtn && fileInput) {
+            browseBtn.onclick = () => fileInput.click();
+        }
+
+        // File input change
+        if (fileInput) {
+            fileInput.onchange = (e) => {
+                const files = Array.from(e.target.files);
+                this.uploadFiles(files);
+            };
+        }
+
+        // Drag and drop
+        if (uploadArea) {
+            uploadArea.ondragover = (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('drag-over');
+            };
+
+            uploadArea.ondragleave = () => {
+                uploadArea.classList.remove('drag-over');
+            };
+
+            uploadArea.ondrop = (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('drag-over');
+                const files = Array.from(e.dataTransfer.files);
+                this.uploadFiles(files);
+            };
+        }
+
+        // Scan folder button
+        if (scanFolderBtn) {
+            scanFolderBtn.onclick = () => this.showScanFolderModal();
+        }
+    }
+
+    async uploadFiles(files) {
+        if (!files || files.length === 0) return;
+
+        this.showSuccess(`Uploading ${files.length} file(s)...`, 2000);
+
+        for (const file of files) {
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const response = await fetch('/api/knowledge/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    this.showSuccess(`Uploaded: ${file.name}`);
+                } else {
+                    this.showError(`Failed to upload ${file.name}: ${data.message}`);
+                }
+            } catch (error) {
+                console.error('Upload error:', error);
+                this.showError(`Error uploading ${file.name}`);
+            }
+        }
+
+        // Reload documents list
+        await this.loadDocuments();
+    }
+
+    async loadDocuments() {
+        try {
+            const response = await fetch('/api/knowledge/documents');
+            const data = await response.json();
+
+            if (data.success) {
+                this.renderDocuments(data.documents || []);
+                this.updateKnowledgeStats(data.stats || {});
+            }
+        } catch (error) {
+            console.error('Failed to load documents:', error);
+        }
+    }
+
+    renderDocuments(documents) {
+        const documentsList = document.getElementById('documents-list');
+        const documentCount = document.getElementById('document-count');
+
+        if (!documentsList) return;
+
+        documentCount.textContent = documents.length;
+
+        if (documents.length === 0) {
+            documentsList.innerHTML = '<p class="placeholder-text">No documents uploaded yet</p>';
+            return;
+        }
+
+        documentsList.innerHTML = documents.map(doc => `
+            <div class="document-card" data-doc-id="${doc.id}">
+                <div class="document-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                </div>
+                <div class="document-info">
+                    <div class="document-name">${doc.name}</div>
+                    <div class="document-meta">
+                        ${doc.size} • ${doc.chunks || 0} chunks • ${this.formatDate(doc.uploaded_at)}
+                    </div>
+                </div>
+                <button class="btn-icon document-delete" data-doc-id="${doc.id}" title="Delete">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                </button>
+            </div>
+        `).join('');
+
+        // Add delete handlers
+        documentsList.querySelectorAll('.document-delete').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const docId = btn.dataset.docId;
+                if (confirm('Delete this document?')) {
+                    await this.deleteDocument(docId);
+                }
+            });
+        });
+    }
+
+    async deleteDocument(docId) {
+        try {
+            const response = await fetch(`/api/knowledge/documents/${docId}`, {
+                method: 'DELETE'
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                this.showSuccess('Document deleted');
+                await this.loadDocuments();
+            } else {
+                this.showError('Failed to delete document');
+            }
+        } catch (error) {
+            console.error('Delete error:', error);
+            this.showError('Error deleting document');
+        }
+    }
+
+    updateKnowledgeStats(stats) {
+        document.getElementById('stat-chunks').textContent = stats.chunks || 0;
+        document.getElementById('stat-entities').textContent = stats.entities || 0;
+        document.getElementById('stat-relations').textContent = stats.relations || 0;
+    }
+
+    showScanFolderModal() {
+        // TODO: Implement folder scanning modal
+        this.showSuccess('Folder scanning coming soon!', 3000);
     }
 
     escapeHtml(text) {
