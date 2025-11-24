@@ -25,8 +25,17 @@ class CleoSpaces {
             // Auto-resize textarea
             this.setupTextareaAutoResize();
 
-            // Setup right sidebar
+            // Setup right sidebar (collapsed by default)
             this.setupRightSidebar();
+
+            // Collapse right sidebar by default
+            const rightSidebar = document.getElementById('right-sidebar');
+            if (rightSidebar) {
+                rightSidebar.classList.add('collapsed');
+            }
+
+            // Auto-create or load Cleo chat space
+            await this.initializeCleoChat();
         } catch (error) {
             console.error('Initialization error:', error);
             this.showError('Failed to initialize application. Please refresh the page.');
@@ -166,8 +175,62 @@ class CleoSpaces {
             this.renderSpace();
             this.renderMessages();
             this.updateRightSidebar();
+
+            // Show right sidebar when in a space
+            const rightSidebar = document.getElementById('right-sidebar');
+            if (rightSidebar) {
+                rightSidebar.classList.remove('collapsed');
+            }
         } catch (error) {
             console.error('Failed to load space:', error);
+        }
+    }
+
+    async initializeCleoChat() {
+        // Look for existing "Chat with Cleo" space
+        const cleoSpace = this.spaces.find(s =>
+            s.name === 'Chat with Cleo' || s.name === 'Cleo'
+        );
+
+        if (cleoSpace) {
+            // Load existing Cleo chat space
+            await this.loadSpace(cleoSpace.id);
+        } else {
+            // Create new "Chat with Cleo" space
+            const cleoAgent = this.agents.find(a => a.name === 'Cleo');
+
+            if (cleoAgent) {
+                try {
+                    const response = await fetch('/api/spaces', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: 'Chat with Cleo',
+                            description: 'Direct conversation with Cleo, your master orchestration agent',
+                            agent_ids: [cleoAgent.id]
+                        })
+                    });
+
+                    const data = await response.json();
+
+                    if (data.success) {
+                        // Reload spaces to include the new one
+                        await this.loadSpaces();
+
+                        // Load the new Cleo space
+                        await this.loadSpace(data.space.id);
+                    } else {
+                        // If creation failed, just show welcome
+                        this.showWelcome();
+                    }
+                } catch (error) {
+                    console.error('Failed to create Cleo chat space:', error);
+                    this.showWelcome();
+                }
+            } else {
+                // No Cleo agent found, show welcome
+                this.showWelcome();
+            }
         }
     }
 
@@ -306,6 +369,12 @@ class CleoSpaces {
     showWelcome() {
         document.getElementById('welcome-state')?.style.setProperty('display', 'flex');
         document.getElementById('input-area')?.style.setProperty('display', 'none');
+
+        // Collapse right sidebar (not in a space)
+        const rightSidebar = document.getElementById('right-sidebar');
+        if (rightSidebar) {
+            rightSidebar.classList.add('collapsed');
+        }
     }
 
     // ===================================
@@ -1080,6 +1149,12 @@ class CleoSpaces {
         // Clear current space
         this.currentSpace = null;
 
+        // Collapse right sidebar (not in a space)
+        const rightSidebar = document.getElementById('right-sidebar');
+        if (rightSidebar) {
+            rightSidebar.classList.add('collapsed');
+        }
+
         // Render agents
         this.renderAgentLibrary();
     }
@@ -1175,6 +1250,12 @@ class CleoSpaces {
 
         // Clear current space
         this.currentSpace = null;
+
+        // Collapse right sidebar (not in a space)
+        const rightSidebar = document.getElementById('right-sidebar');
+        if (rightSidebar) {
+            rightSidebar.classList.add('collapsed');
+        }
     }
 
     escapeHtml(text) {
