@@ -11,6 +11,7 @@ from flask_login import LoginManager, login_user, logout_user, login_required, c
 from models import db, User, Agent, Job, Activity, Space, Message, Document, DocumentChunk, Entity, Relation
 from agents import get_agent, list_agent_names, agent_count
 from knowledge_processor import get_processor
+from vector_store import get_vector_store
 from werkzeug.utils import secure_filename
 import json
 
@@ -608,8 +609,48 @@ def send_message(space_id):
                     for mention in mentions:
                         clean_message = clean_message.replace(f'@{mention}', mention)
 
+                    # Query knowledge base for relevant context (RAG)
+                    knowledge_context = None
+                    retrieved_sources = []
+
+                    try:
+                        vector_store = get_vector_store()
+                        search_results = vector_store.search(clean_message, n_results=3)
+
+                        if search_results:
+                            # Build context from retrieved documents
+                            context_parts = []
+                            for idx, result in enumerate(search_results, 1):
+                                doc_id = result['metadata'].get('document_id')
+                                document = db.session.get(Document, doc_id)
+
+                                if document:
+                                    context_parts.append(
+                                        f"[Source {idx}: {document.name}]\n{result['content']}\n"
+                                    )
+                                    retrieved_sources.append({
+                                        'document_id': document.id,
+                                        'document_name': document.name,
+                                        'chunk_index': result['metadata'].get('chunk_index'),
+                                        'relevance': result['relevance']
+                                    })
+
+                            if context_parts:
+                                knowledge_context = (
+                                    "The following information from the knowledge base may be relevant:\n\n" +
+                                    "\n".join(context_parts) +
+                                    "\n---\n\n"
+                                )
+                    except Exception as e:
+                        logger.warning(f"Knowledge retrieval failed: {e}")
+
+                    # Prepare message for agent (with knowledge context if available)
+                    agent_message = clean_message
+                    if knowledge_context:
+                        agent_message = knowledge_context + "User question: " + clean_message
+
                     # Send to agent
-                    response_text = agent_instance.run(clean_message)
+                    response_text = agent_instance.run(agent_message)
 
                     # Create and save agent response
                     agent_msg = Message(
@@ -620,6 +661,10 @@ def send_message(space_id):
                         agent_tier=target_agent['tier'],
                         content=response_text
                     )
+
+                    # Store retrieved sources in metadata for citations
+                    if retrieved_sources:
+                        agent_msg.set_citations(retrieved_sources)
 
                     db.session.add(agent_msg)
                     db.session.commit()
@@ -1520,7 +1565,7 @@ def upload_document():
                     chunk_index=chunk_data['chunk_index'],
                     content=chunk_data['content'],
                     token_count=chunk_data['token_count'],
-                    metadata=json.dumps(chunk_data['metadata'])
+                    chunk_metadata=json.dumps(chunk_data['metadata'])
                 )
                 db.session.add(chunk)
 
@@ -1553,6 +1598,15 @@ def upload_document():
                         confidence=relation_data['confidence']
                     )
                     db.session.add(relation)
+
+            # Generate and store vector embeddings
+            try:
+                vector_store = get_vector_store()
+                vector_store.add_chunks(chunks, document.id)
+                logger.info(f"Generated embeddings for {len(chunks)} chunks")
+            except Exception as e:
+                logger.error(f"Error generating embeddings: {e}")
+                # Continue even if embedding fails
 
             # Update document status
             document.status = 'completed'
@@ -1663,6 +1717,14 @@ def delete_document(doc_id):
             except Exception as e:
                 logger.warning(f"Failed to delete file {document.file_path}: {e}")
 
+        # Delete from vector store
+        try:
+            vector_store = get_vector_store()
+            vector_store.delete_document(doc_id)
+            logger.info(f"Deleted embeddings for document {doc_id}")
+        except Exception as e:
+            logger.warning(f"Failed to delete embeddings: {e}")
+
         # Delete document (cascade will delete chunks)
         db.session.delete(document)
         db.session.commit()
@@ -1677,6 +1739,447 @@ def delete_document(doc_id):
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error deleting document: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/knowledge/search', methods=['POST'])
+def search_knowledge():
+    """Semantic search across knowledge base"""
+    try:
+        data = request.get_json()
+        query = data.get('query', '').strip()
+        n_results = data.get('n_results', 5)
+
+        if not query:
+            return jsonify({
+                'success': False,
+                'message': 'Query is required'
+            }), 400
+
+        # Perform semantic search
+        vector_store = get_vector_store()
+        results = vector_store.search(query, n_results=n_results)
+
+        # Enrich results with document information
+        enriched_results = []
+        for result in results:
+            doc_id = result['metadata'].get('document_id')
+            document = db.session.get(Document, doc_id)
+
+            if document:
+                enriched_results.append({
+                    'content': result['content'],
+                    'relevance': result['relevance'],
+                    'distance': result['distance'],
+                    'chunk_index': result['metadata'].get('chunk_index'),
+                    'document': {
+                        'id': document.id,
+                        'name': document.name,
+                        'file_type': document.file_type,
+                        'uploaded_at': document.uploaded_at.isoformat()
+                    }
+                })
+
+        return jsonify({
+            'success': True,
+            'results': enriched_results,
+            'query': query,
+            'total_results': len(enriched_results)
+        })
+
+    except Exception as e:
+        logger.error(f"Error searching knowledge base: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/knowledge/scan-folder', methods=['POST'])
+def scan_folder():
+    """Scan a folder and upload all supported documents"""
+    try:
+        data = request.get_json()
+        folder_path = data.get('folder_path', '').strip()
+
+        if not folder_path:
+            return jsonify({
+                'success': False,
+                'message': 'Folder path is required'
+            }), 400
+
+        # Validate folder exists
+        if not os.path.exists(folder_path):
+            return jsonify({
+                'success': False,
+                'message': 'Folder does not exist'
+            }), 404
+
+        if not os.path.isdir(folder_path):
+            return jsonify({
+                'success': False,
+                'message': 'Path is not a directory'
+            }), 400
+
+        # Supported file extensions
+        supported_extensions = {'.pdf', '.docx', '.txt', '.md'}
+
+        # Scan folder recursively
+        discovered_files = []
+        for root, dirs, files in os.walk(folder_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                _, ext = os.path.splitext(file)
+                if ext.lower() in supported_extensions:
+                    discovered_files.append({
+                        'path': file_path,
+                        'name': file,
+                        'size': os.path.getsize(file_path),
+                        'extension': ext.lower()
+                    })
+
+        if not discovered_files:
+            return jsonify({
+                'success': True,
+                'message': 'No supported documents found in folder',
+                'discovered': 0,
+                'files': []
+            })
+
+        # Process each file
+        uploaded_files = []
+        failed_files = []
+
+        for file_info in discovered_files:
+            try:
+                # Check if file already exists in database
+                existing_doc = db.session.query(Document).filter_by(
+                    name=file_info['name'],
+                    file_path=file_info['path']
+                ).first()
+
+                if existing_doc:
+                    logger.info(f"Skipping duplicate: {file_info['name']}")
+                    continue
+
+                # Process the document
+                processor = KnowledgeProcessor()
+
+                # Extract text
+                text = processor.extract_text(file_info['path'])
+                if not text:
+                    failed_files.append({
+                        'name': file_info['name'],
+                        'error': 'Failed to extract text'
+                    })
+                    continue
+
+                # Chunk text
+                chunks = processor.chunk_text(text)
+                if not chunks:
+                    failed_files.append({
+                        'name': file_info['name'],
+                        'error': 'Failed to create chunks'
+                    })
+                    continue
+
+                # Extract entities
+                entities = processor.extract_entities(text)
+
+                # Create document record
+                document = Document(
+                    name=file_info['name'],
+                    file_path=file_info['path'],
+                    file_type=file_info['extension'].replace('.', ''),
+                    file_size=file_info['size']
+                )
+                db.session.add(document)
+                db.session.flush()
+
+                # Create chunk records
+                for chunk_data in chunks:
+                    chunk = DocumentChunk(
+                        document_id=document.id,
+                        chunk_index=chunk_data['chunk_index'],
+                        content=chunk_data['content'],
+                        token_count=chunk_data['token_count'],
+                        chunk_metadata=json.dumps({
+                            'start_char': chunk_data.get('start_char', 0),
+                            'end_char': chunk_data.get('end_char', len(chunk_data['content']))
+                        })
+                    )
+                    db.session.add(chunk)
+
+                # Create entity records
+                for entity_name, entity_type in entities:
+                    entity = Entity(
+                        document_id=document.id,
+                        name=entity_name,
+                        entity_type=entity_type
+                    )
+                    db.session.add(entity)
+
+                db.session.commit()
+
+                # Generate and store vector embeddings
+                try:
+                    vector_store = get_vector_store()
+                    vector_store.add_chunks(chunks, document.id)
+                    logger.info(f"Generated embeddings for {len(chunks)} chunks")
+                except Exception as e:
+                    logger.error(f"Error generating embeddings: {e}")
+
+                uploaded_files.append({
+                    'name': file_info['name'],
+                    'id': document.id,
+                    'chunks': len(chunks),
+                    'entities': len(entities)
+                })
+
+            except Exception as e:
+                logger.error(f"Error processing {file_info['name']}: {e}")
+                failed_files.append({
+                    'name': file_info['name'],
+                    'error': str(e)
+                })
+
+        return jsonify({
+            'success': True,
+            'message': f'Scanned folder and processed {len(uploaded_files)} documents',
+            'discovered': len(discovered_files),
+            'uploaded': len(uploaded_files),
+            'failed': len(failed_files),
+            'files': uploaded_files,
+            'errors': failed_files
+        })
+
+    except Exception as e:
+        logger.error(f"Error scanning folder: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/knowledge/graph', methods=['GET'])
+def get_knowledge_graph():
+    """Get graph data for knowledge visualization"""
+    try:
+        # Get all documents
+        documents = Document.query.all()
+
+        # Build nodes (documents)
+        nodes = []
+        for doc in documents:
+            nodes.append({
+                'id': f'doc_{doc.id}',
+                'label': doc.name,
+                'type': 'document',
+                'file_type': doc.file_type,
+                'size': doc.file_size,
+                'chunks': db.session.query(DocumentChunk).filter_by(document_id=doc.id).count(),
+                'uploaded_at': doc.uploaded_at.isoformat()
+            })
+
+        # Build edges (document similarities based on vector embeddings)
+        edges = []
+        vector_store = get_vector_store()
+
+        # For each document, find similar documents
+        for doc in documents[:20]:  # Limit to first 20 for performance
+            # Get a sample chunk from this document
+            sample_chunk = db.session.query(DocumentChunk).filter_by(
+                document_id=doc.id,
+                chunk_index=0
+            ).first()
+
+            if sample_chunk:
+                # Search for similar chunks
+                similar = vector_store.search(sample_chunk.content, n_results=5)
+
+                for result in similar:
+                    similar_doc_id = result['metadata'].get('document_id')
+
+                    # Don't create self-edges
+                    if similar_doc_id and similar_doc_id != doc.id:
+                        # Create edge if relevance is high enough
+                        if result['relevance'] > 0.3:
+                            edges.append({
+                                'source': f'doc_{doc.id}',
+                                'target': f'doc_{similar_doc_id}',
+                                'weight': result['relevance'],
+                                'label': f"{int(result['relevance'] * 100)}% similar"
+                            })
+
+        return jsonify({
+            'success': True,
+            'graph': {
+                'nodes': nodes,
+                'edges': edges
+            },
+            'stats': {
+                'total_documents': len(documents),
+                'total_relationships': len(edges)
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error generating knowledge graph: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/knowledge/search/advanced', methods=['POST'])
+def advanced_search_knowledge():
+    """Advanced search with filters"""
+    try:
+        data = request.get_json()
+        query = data.get('query', '').strip()
+        file_types = data.get('file_types', [])  # List of file types to filter
+        date_from = data.get('date_from')  # ISO date string
+        date_to = data.get('date_to')  # ISO date string
+        n_results = data.get('n_results', 10)
+
+        if not query:
+            return jsonify({
+                'success': False,
+                'message': 'Query is required'
+            }), 400
+
+        # Perform semantic search
+        vector_store = get_vector_store()
+        results = vector_store.search(query, n_results=n_results * 2)  # Get more to filter
+
+        # Filter and enrich results
+        filtered_results = []
+        for result in results:
+            doc_id = result['metadata'].get('document_id')
+            document = db.session.get(Document, doc_id)
+
+            if not document:
+                continue
+
+            # Apply file type filter
+            if file_types and document.file_type not in file_types:
+                continue
+
+            # Apply date range filter
+            if date_from:
+                try:
+                    from datetime import datetime
+                    date_from_obj = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+                    if document.uploaded_at < date_from_obj:
+                        continue
+                except:
+                    pass
+
+            if date_to:
+                try:
+                    from datetime import datetime
+                    date_to_obj = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+                    if document.uploaded_at > date_to_obj:
+                        continue
+                except:
+                    pass
+
+            filtered_results.append({
+                'content': result['content'],
+                'relevance': result['relevance'],
+                'distance': result['distance'],
+                'chunk_index': result['metadata'].get('chunk_index'),
+                'document': {
+                    'id': document.id,
+                    'name': document.name,
+                    'file_type': document.file_type,
+                    'file_size': document.file_size,
+                    'uploaded_at': document.uploaded_at.isoformat()
+                }
+            })
+
+            # Stop once we have enough results
+            if len(filtered_results) >= n_results:
+                break
+
+        return jsonify({
+            'success': True,
+            'results': filtered_results,
+            'query': query,
+            'filters': {
+                'file_types': file_types,
+                'date_from': date_from,
+                'date_to': date_to
+            },
+            'total_results': len(filtered_results)
+        })
+
+    except Exception as e:
+        logger.error(f"Error in advanced search: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/knowledge/export', methods=['POST'])
+def export_search_results():
+    """Export search results to CSV"""
+    try:
+        import csv
+        from io import StringIO
+        from datetime import datetime
+
+        data = request.get_json()
+        results = data.get('results', [])
+
+        if not results:
+            return jsonify({
+                'success': False,
+                'message': 'No results to export'
+            }), 400
+
+        # Create CSV in memory
+        output = StringIO()
+        writer = csv.writer(output)
+
+        # Write header
+        writer.writerow([
+            'Document Name',
+            'File Type',
+            'Relevance Score',
+            'Chunk Content',
+            'Uploaded At'
+        ])
+
+        # Write data rows
+        for result in results:
+            doc = result.get('document', {})
+            writer.writerow([
+                doc.get('name', ''),
+                doc.get('file_type', ''),
+                f"{result.get('relevance', 0):.2f}",
+                result.get('content', '')[:500],  # Limit content length
+                doc.get('uploaded_at', '')
+            ])
+
+        # Get CSV content
+        csv_content = output.getvalue()
+        output.close()
+
+        # Return as downloadable file
+        from flask import make_response
+        response = make_response(csv_content)
+        response.headers['Content-Type'] = 'text/csv'
+        response.headers['Content-Disposition'] = f'attachment; filename=knowledge_search_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error exporting search results: {e}")
         return jsonify({
             'success': False,
             'message': str(e)

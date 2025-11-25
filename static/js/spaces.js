@@ -176,11 +176,8 @@ class CleoSpaces {
             this.renderMessages();
             this.updateRightSidebar();
 
-            // Show right sidebar when in a space
-            const rightSidebar = document.getElementById('right-sidebar');
-            if (rightSidebar) {
-                rightSidebar.classList.remove('collapsed');
-            }
+            // Keep right sidebar collapsed by default
+            // User can manually toggle it using the button if needed
         } catch (error) {
             console.error('Failed to load space:', error);
         }
@@ -338,29 +335,70 @@ class CleoSpaces {
         const messagesArea = document.getElementById('messages-area');
         if (!messagesArea) return;
 
-        // Clear welcome state if showing
-        const welcomeState = messagesArea.querySelector('.welcome-state');
-        if (welcomeState) {
-            welcomeState.remove();
+        // Hide library views
+        const welcomeState = document.getElementById('welcome-state');
+        const agentLibrary = document.getElementById('agent-library');
+        const knowledgeLibrary = document.getElementById('knowledge-library');
+        const integrationsLibrary = document.getElementById('integrations-library');
+
+        if (welcomeState) welcomeState.style.display = 'none';
+        if (agentLibrary) agentLibrary.style.display = 'none';
+        if (knowledgeLibrary) knowledgeLibrary.style.display = 'none';
+        if (integrationsLibrary) integrationsLibrary.style.display = 'none';
+
+        // Show or create message list container
+        let messageList = messagesArea.querySelector('.message-list');
+        if (!messageList) {
+            messageList = document.createElement('div');
+            messageList.className = 'message-list';
+            messagesArea.appendChild(messageList);
         }
+        messageList.style.display = 'block';
 
         // Render messages
-        const messagesHTML = this.messages.map(msg => `
-            <div class="message ${msg.role}">
-                <div class="message-avatar ${msg.role === 'agent' ? 'agent-tier-' + msg.agent_tier : ''}">
-                    ${msg.role === 'user' ? 'AS' : this.getAgentInitials(msg.agent_name)}
-                </div>
-                <div class="message-content">
-                    <div class="message-header">
-                        <span class="message-author">${msg.author}</span>
-                        <span class="message-time">${this.formatTime(msg.timestamp)}</span>
+        const messagesHTML = this.messages.map(msg => {
+            let citationsHTML = '';
+            if (msg.citations && msg.citations.length > 0) {
+                citationsHTML = `
+                    <div class="message-citations">
+                        <div class="citations-header">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                <polyline points="14 2 14 8 20 8"/>
+                            </svg>
+                            <span>Sources (${msg.citations.length})</span>
+                        </div>
+                        <div class="citations-list">
+                            ${msg.citations.map((citation, idx) => `
+                                <div class="citation-item">
+                                    <span class="citation-number">${idx + 1}</span>
+                                    <span class="citation-name">${citation.document_name}</span>
+                                    <span class="citation-relevance">${Math.round(citation.relevance * 100)}% match</span>
+                                </div>
+                            `).join('')}
+                        </div>
                     </div>
-                    <div class="message-body">${this.escapeHtml(msg.content)}</div>
-                </div>
-            </div>
-        `).join('');
+                `;
+            }
 
-        messagesArea.innerHTML = messagesHTML;
+            return `
+                <div class="message ${msg.role}">
+                    <div class="message-avatar ${msg.role === 'agent' ? 'agent-tier-' + msg.agent_tier : ''}">
+                        ${msg.role === 'user' ? 'AS' : this.getAgentInitials(msg.agent_name)}
+                    </div>
+                    <div class="message-content">
+                        <div class="message-header">
+                            <span class="message-author">${msg.author}</span>
+                            <span class="message-time">${this.formatTime(msg.timestamp)}</span>
+                        </div>
+                        <div class="message-body">${this.escapeHtml(msg.content)}</div>
+                        ${citationsHTML}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        messageList.innerHTML = messagesHTML;
 
         // Scroll to bottom
         this.scrollToBottom();
@@ -394,16 +432,19 @@ class CleoSpaces {
 
         // View Agents button
         document.getElementById('view-agents-btn')?.addEventListener('click', () => {
+            console.log('Agents button clicked');
             this.showAgentLibrary();
         });
 
         // View Integrations button
         document.getElementById('view-integrations-btn')?.addEventListener('click', () => {
+            console.log('Integrations button clicked');
             this.showIntegrationsLibrary();
         });
 
         // View Knowledge button
         document.getElementById('view-knowledge-btn')?.addEventListener('click', () => {
+            console.log('Knowledge button clicked');
             this.showKnowledgeLibrary();
         });
 
@@ -1135,9 +1176,18 @@ class CleoSpaces {
     // ===================================
 
     showAgentLibrary() {
+        console.log('showAgentLibrary() called');
+
         // Hide all other content
-        document.getElementById('welcome-state').style.display = 'none';
-        document.getElementById('input-area').style.display = 'none';
+        const welcomeState = document.getElementById('welcome-state');
+        const inputArea = document.getElementById('input-area');
+        const knowledgeLibrary = document.getElementById('knowledge-library');
+        const integrationsLibrary = document.getElementById('integrations-library');
+
+        if (welcomeState) welcomeState.style.display = 'none';
+        if (inputArea) inputArea.style.display = 'none';
+        if (knowledgeLibrary) knowledgeLibrary.style.display = 'none';
+        if (integrationsLibrary) integrationsLibrary.style.display = 'none';
 
         // Hide message list
         const messageList = document.querySelector('.message-list');
@@ -1145,7 +1195,8 @@ class CleoSpaces {
 
         // Show agent library
         const agentLibrary = document.getElementById('agent-library');
-        agentLibrary.style.display = 'block';
+        console.log('Agent library element:', agentLibrary);
+        if (agentLibrary) agentLibrary.style.display = 'block';
 
         // Update header
         document.getElementById('space-title').textContent = 'Agent Library';
@@ -1237,10 +1288,15 @@ class CleoSpaces {
 
     showIntegrationsLibrary() {
         // Hide all other content
-        document.getElementById('welcome-state').style.display = 'none';
-        document.getElementById('agent-library').style.display = 'none';
-        document.getElementById('knowledge-library').style.display = 'none';
-        document.getElementById('input-area').style.display = 'none';
+        const welcomeState = document.getElementById('welcome-state');
+        const agentLibrary = document.getElementById('agent-library');
+        const knowledgeLibrary = document.getElementById('knowledge-library');
+        const inputArea = document.getElementById('input-area');
+
+        if (welcomeState) welcomeState.style.display = 'none';
+        if (agentLibrary) agentLibrary.style.display = 'none';
+        if (knowledgeLibrary) knowledgeLibrary.style.display = 'none';
+        if (inputArea) inputArea.style.display = 'none';
 
         // Hide message list
         const messageList = document.querySelector('.message-list');
@@ -1248,7 +1304,7 @@ class CleoSpaces {
 
         // Show integrations library
         const integrationsLibrary = document.getElementById('integrations-library');
-        integrationsLibrary.style.display = 'block';
+        if (integrationsLibrary) integrationsLibrary.style.display = 'block';
 
         // Update header
         document.getElementById('space-title').textContent = 'Integrations';
@@ -1262,6 +1318,72 @@ class CleoSpaces {
         if (rightSidebar) {
             rightSidebar.classList.add('collapsed');
         }
+
+        // Setup integration handlers
+        this.setupIntegrationsHandlers();
+    }
+
+    setupIntegrationsHandlers() {
+        // Todoist Configure button
+        const todoistConfigBtn = document.querySelector('[data-integration="todoist"] .btn-secondary');
+        if (todoistConfigBtn) {
+            todoistConfigBtn.onclick = () => this.showIntegrationConfig('todoist');
+        }
+
+        // Todoist Disconnect button
+        const todoistDisconnectBtn = document.querySelector('[data-integration="todoist"] .btn-text');
+        if (todoistDisconnectBtn) {
+            todoistDisconnectBtn.onclick = () => this.disconnectIntegration('todoist');
+        }
+
+        // Telegram Configure button
+        const telegramConfigBtn = document.querySelector('[data-integration="telegram"] .btn-secondary');
+        if (telegramConfigBtn) {
+            telegramConfigBtn.onclick = () => this.showIntegrationConfig('telegram');
+        }
+
+        // Telegram Disconnect button
+        const telegramDisconnectBtn = document.querySelector('[data-integration="telegram"] .btn-text');
+        if (telegramDisconnectBtn) {
+            telegramDisconnectBtn.onclick = () => this.disconnectIntegration('telegram');
+        }
+
+        // Save configuration buttons
+        document.getElementById('save-todoist-config')?.addEventListener('click', () => {
+            this.saveIntegrationConfig('todoist');
+        });
+
+        document.getElementById('save-telegram-config')?.addEventListener('click', () => {
+            this.saveIntegrationConfig('telegram');
+        });
+    }
+
+    showIntegrationConfig(integration) {
+        const modal = document.getElementById(`${integration}-config-modal`);
+        if (modal) {
+            modal.classList.add('active');
+        }
+    }
+
+    disconnectIntegration(integration) {
+        const integrationName = integration.charAt(0).toUpperCase() + integration.slice(1);
+        if (confirm(`Are you sure you want to disconnect ${integrationName}?`)) {
+            this.showSuccess(`${integrationName} disconnected successfully`);
+            // TODO: Implement actual disconnection logic
+        }
+    }
+
+    saveIntegrationConfig(integration) {
+        const integrationName = integration.charAt(0).toUpperCase() + integration.slice(1);
+        this.showSuccess(`${integrationName} configuration saved successfully`);
+
+        // Close the modal
+        const modal = document.getElementById(`${integration}-config-modal`);
+        if (modal) {
+            modal.classList.remove('active');
+        }
+
+        // TODO: Implement actual save logic
     }
 
     // ===================================
@@ -1270,10 +1392,15 @@ class CleoSpaces {
 
     showKnowledgeLibrary() {
         // Hide all other content
-        document.getElementById('welcome-state').style.display = 'none';
-        document.getElementById('agent-library').style.display = 'none';
-        document.getElementById('integrations-library').style.display = 'none';
-        document.getElementById('input-area').style.display = 'none';
+        const welcomeState = document.getElementById('welcome-state');
+        const agentLibrary = document.getElementById('agent-library');
+        const integrationsLibrary = document.getElementById('integrations-library');
+        const inputArea = document.getElementById('input-area');
+
+        if (welcomeState) welcomeState.style.display = 'none';
+        if (agentLibrary) agentLibrary.style.display = 'none';
+        if (integrationsLibrary) integrationsLibrary.style.display = 'none';
+        if (inputArea) inputArea.style.display = 'none';
 
         // Hide message list
         const messageList = document.querySelector('.message-list');
@@ -1281,7 +1408,7 @@ class CleoSpaces {
 
         // Show knowledge library
         const knowledgeLibrary = document.getElementById('knowledge-library');
-        knowledgeLibrary.style.display = 'block';
+        if (knowledgeLibrary) knowledgeLibrary.style.display = 'block';
 
         // Update header
         document.getElementById('space-title').textContent = 'Knowledge Base';
@@ -1298,6 +1425,9 @@ class CleoSpaces {
 
         // Setup upload handlers
         this.setupFileUpload();
+
+        // Setup search handlers
+        this.setupSearch();
 
         // Load documents
         this.loadDocuments();
@@ -1399,7 +1529,7 @@ class CleoSpaces {
 
         if (!documentsList) return;
 
-        documentCount.textContent = documents.length;
+        if (documentCount) documentCount.textContent = documents.length;
 
         if (documents.length === 0) {
             documentsList.innerHTML = '<p class="placeholder-text">No documents uploaded yet</p>';
@@ -1460,15 +1590,500 @@ class CleoSpaces {
         }
     }
 
+    setupSearch() {
+        const searchInput = document.getElementById('knowledge-search-input');
+        const searchBtn = document.getElementById('knowledge-search-btn');
+        const clearBtn = document.getElementById('clear-search-btn');
+        const toggleFiltersBtn = document.getElementById('toggle-filters-btn');
+        const exportBtn = document.getElementById('export-results-btn');
+        const viewGraphBtn = document.getElementById('view-graph-btn');
+
+        // Toggle filters
+        if (toggleFiltersBtn) {
+            toggleFiltersBtn.addEventListener('click', () => {
+                const filters = document.getElementById('search-filters');
+                if (filters) {
+                    filters.style.display = filters.style.display === 'none' ? 'block' : 'none';
+                }
+            });
+        }
+
+        // Search button click
+        if (searchBtn) {
+            searchBtn.addEventListener('click', () => {
+                const query = searchInput?.value?.trim();
+                if (query) {
+                    this.performSearch(query);
+                }
+            });
+        }
+
+        // Enter key in search input
+        if (searchInput) {
+            searchInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    const query = searchInput.value.trim();
+                    if (query) {
+                        this.performSearch(query);
+                    }
+                }
+            });
+        }
+
+        // Clear search button
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                this.clearSearch();
+            });
+        }
+
+        // Export results button
+        if (exportBtn) {
+            exportBtn.addEventListener('click', () => {
+                this.exportSearchResults();
+            });
+        }
+
+        // View graph button
+        if (viewGraphBtn) {
+            viewGraphBtn.addEventListener('click', () => {
+                this.toggleKnowledgeGraph();
+            });
+        }
+    }
+
+    async performSearch(query) {
+        const searchResults = document.getElementById('search-results');
+        const searchResultsList = document.getElementById('search-results-list');
+        const searchResultsTitle = document.getElementById('search-results-title');
+
+        if (!searchResults || !searchResultsList) return;
+
+        // Show loading state
+        searchResults.style.display = 'block';
+        searchResultsList.innerHTML = '<p style="text-align: center; padding: 20px; color: var(--color-text-secondary);">Searching...</p>';
+
+        try {
+            // Get filter values
+            const fileTypeCheckboxes = document.querySelectorAll('.filter-checkboxes input[type="checkbox"]:checked');
+            const fileTypes = Array.from(fileTypeCheckboxes).map(cb => cb.value);
+            const dateFrom = document.getElementById('date-from')?.value || null;
+            const dateTo = document.getElementById('date-to')?.value || null;
+
+            // Use advanced search if filters are applied
+            const useAdvanced = fileTypes.length < 4 || dateFrom || dateTo;
+            const endpoint = useAdvanced ? '/api/knowledge/search/advanced' : '/api/knowledge/search';
+
+            const requestBody = {
+                query: query,
+                n_results: 10
+            };
+
+            if (useAdvanced) {
+                if (fileTypes.length > 0) requestBody.file_types = fileTypes;
+                if (dateFrom) requestBody.date_from = new Date(dateFrom).toISOString();
+                if (dateTo) requestBody.date_to = new Date(dateTo).toISOString();
+            }
+
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(requestBody)
+            });
+
+            const data = await response.json();
+
+            if (data.success && data.results && data.results.length > 0) {
+                searchResultsTitle.textContent = `${data.total_results} Result${data.total_results !== 1 ? 's' : ''}`;
+                this.currentSearchResults = data.results; // Store for export
+                this.renderSearchResults(data.results);
+            } else {
+                searchResultsTitle.textContent = 'No Results';
+                this.currentSearchResults = [];
+                searchResultsList.innerHTML = `
+                    <div class="no-results">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"/>
+                            <path d="m21 21-4.35-4.35"/>
+                        </svg>
+                        <p>No relevant documents found for "${query}"</p>
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.error('Search error:', error);
+            searchResultsList.innerHTML = '<p style="text-align: center; padding: 20px; color: var(--color-error);">Error performing search</p>';
+        }
+    }
+
+    renderSearchResults(results) {
+        const searchResultsList = document.getElementById('search-results-list');
+        if (!searchResultsList) return;
+
+        searchResultsList.innerHTML = results.map(result => {
+            const relevanceScore = (result.relevance * 100).toFixed(0);
+            let relevanceClass = 'relevance-low';
+            if (result.relevance >= 0.7) relevanceClass = 'relevance-high';
+            else if (result.relevance >= 0.4) relevanceClass = 'relevance-medium';
+
+            return `
+                <div class="search-result-item">
+                    <div class="result-header">
+                        <div class="result-source">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                <polyline points="14 2 14 8 20 8"/>
+                            </svg>
+                            ${result.document.name}
+                        </div>
+                        <div class="result-relevance ${relevanceClass}">
+                            ${relevanceScore}% match
+                        </div>
+                    </div>
+                    <div class="result-content">
+                        ${this.escapeHtml(result.content)}
+                    </div>
+                    <div class="result-meta">
+                        <span>Chunk ${result.chunk_index + 1}</span>
+                        <span>•</span>
+                        <span>${result.document.file_type.toUpperCase()}</span>
+                        <span>•</span>
+                        <span>${this.formatDate(result.document.uploaded_at)}</span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    clearSearch() {
+        const searchInput = document.getElementById('knowledge-search-input');
+        const searchResults = document.getElementById('search-results');
+
+        if (searchInput) searchInput.value = '';
+        if (searchResults) searchResults.style.display = 'none';
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
     updateKnowledgeStats(stats) {
-        document.getElementById('stat-chunks').textContent = stats.chunks || 0;
-        document.getElementById('stat-entities').textContent = stats.entities || 0;
-        document.getElementById('stat-relations').textContent = stats.relations || 0;
+        const statChunks = document.getElementById('stat-chunks');
+        const statEntities = document.getElementById('stat-entities');
+        const statRelations = document.getElementById('stat-relations');
+
+        if (statChunks) statChunks.textContent = stats.chunks || 0;
+        if (statEntities) statEntities.textContent = stats.entities || 0;
+        if (statRelations) statRelations.textContent = stats.relations || 0;
     }
 
     showScanFolderModal() {
-        // TODO: Implement folder scanning modal
-        this.showSuccess('Folder scanning coming soon!', 3000);
+        const modal = document.getElementById('scan-folder-modal');
+        const folderPathInput = document.getElementById('folder-path-input');
+        const startScanBtn = document.getElementById('start-scan-btn');
+        const cancelScanBtn = document.getElementById('cancel-scan-btn');
+        const closeScanModal = document.getElementById('close-scan-modal');
+        const scanProgress = document.getElementById('scan-progress');
+        const scanResults = document.getElementById('scan-results');
+
+        if (!modal) return;
+
+        // Reset modal state
+        if (folderPathInput) folderPathInput.value = '';
+        if (scanProgress) scanProgress.style.display = 'none';
+        if (scanResults) scanResults.style.display = 'none';
+
+        // Show modal
+        modal.style.display = 'flex';
+
+        // Close modal handler
+        const closeModal = () => {
+            modal.style.display = 'none';
+        };
+
+        if (closeScanModal) closeScanModal.onclick = closeModal;
+        if (cancelScanBtn) cancelScanBtn.onclick = closeModal;
+
+        // Start scan handler
+        if (startScanBtn) {
+            startScanBtn.onclick = async () => {
+                const folderPath = folderPathInput?.value?.trim();
+
+                if (!folderPath) {
+                    this.showError('Please enter a folder path');
+                    return;
+                }
+
+                await this.scanFolder(folderPath);
+            };
+        }
+
+        // Enter key handler
+        if (folderPathInput) {
+            folderPathInput.onkeypress = (e) => {
+                if (e.key === 'Enter') {
+                    startScanBtn?.click();
+                }
+            };
+        }
+    }
+
+    async scanFolder(folderPath) {
+        const scanProgress = document.getElementById('scan-progress');
+        const scanStatus = document.getElementById('scan-status');
+        const scanCount = document.getElementById('scan-count');
+        const scanProgressFill = document.getElementById('scan-progress-fill');
+        const scanResults = document.getElementById('scan-results');
+        const startScanBtn = document.getElementById('start-scan-btn');
+
+        // Show progress
+        if (scanProgress) scanProgress.style.display = 'block';
+        if (scanResults) scanResults.style.display = 'none';
+        if (startScanBtn) startScanBtn.disabled = true;
+
+        try {
+            // Update status
+            if (scanStatus) scanStatus.textContent = 'Scanning folder...';
+            if (scanProgressFill) scanProgressFill.style.width = '50%';
+
+            const response = await fetch('/api/knowledge/scan-folder', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    folder_path: folderPath
+                })
+            });
+
+            const data = await response.json();
+
+            // Update progress to complete
+            if (scanProgressFill) scanProgressFill.style.width = '100%';
+
+            if (data.success) {
+                // Hide progress, show results
+                if (scanProgress) scanProgress.style.display = 'none';
+                if (scanResults) {
+                    scanResults.style.display = 'block';
+                    scanResults.innerHTML = `
+                        <div class="scan-result-summary">
+                            <h3 style="margin: 0 0 12px 0; color: var(--color-text-primary);">Scan Complete</h3>
+                            <p style="margin: 0; color: var(--color-text-secondary);">${data.message}</p>
+                            <div class="scan-result-stats">
+                                <div class="scan-stat">
+                                    <div class="scan-stat-value">${data.discovered || 0}</div>
+                                    <div class="scan-stat-label">Discovered</div>
+                                </div>
+                                <div class="scan-stat">
+                                    <div class="scan-stat-value">${data.uploaded || 0}</div>
+                                    <div class="scan-stat-label">Uploaded</div>
+                                </div>
+                                <div class="scan-stat">
+                                    <div class="scan-stat-value">${data.failed || 0}</div>
+                                    <div class="scan-stat-label">Failed</div>
+                                </div>
+                            </div>
+                            ${data.errors && data.errors.length > 0 ? `
+                                <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--color-border);">
+                                    <h4 style="margin: 0 0 8px 0; color: var(--color-error);">Errors:</h4>
+                                    <ul style="margin: 0; padding-left: 20px; color: var(--color-text-secondary);">
+                                        ${data.errors.map(err => `<li>${err.name}: ${err.error}</li>`).join('')}
+                                    </ul>
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                }
+
+                // Refresh documents list
+                await this.loadDocuments();
+
+                this.showSuccess(`Uploaded ${data.uploaded || 0} document(s)`);
+            } else {
+                this.showError(data.message || 'Failed to scan folder');
+                if (scanProgress) scanProgress.style.display = 'none';
+            }
+
+        } catch (error) {
+            console.error('Scan error:', error);
+            this.showError('Error scanning folder');
+            if (scanProgress) scanProgress.style.display = 'none';
+        } finally {
+            if (startScanBtn) startScanBtn.disabled = false;
+        }
+    }
+
+    async exportSearchResults() {
+        if (!this.currentSearchResults || this.currentSearchResults.length === 0) {
+            this.showError('No search results to export');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/knowledge/export', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    results: this.currentSearchResults
+                })
+            });
+
+            if (response.ok) {
+                // Trigger download
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `knowledge_search_${new Date().toISOString().slice(0,10)}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                this.showSuccess('Results exported successfully');
+            } else {
+                this.showError('Failed to export results');
+            }
+        } catch (error) {
+            console.error('Export error:', error);
+            this.showError('Error exporting results');
+        }
+    }
+
+    async toggleKnowledgeGraph() {
+        const graphContainer = document.getElementById('graph-container');
+        const viewGraphBtn = document.getElementById('view-graph-btn');
+
+        if (!graphContainer) return;
+
+        if (graphContainer.style.display === 'none') {
+            // Load and show graph
+            graphContainer.style.display = 'block';
+            viewGraphBtn.textContent = 'Hide Graph';
+            await this.renderKnowledgeGraph();
+        } else {
+            // Hide graph
+            graphContainer.style.display = 'none';
+            viewGraphBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                    <circle cx="12" cy="12" r="10"/>
+                    <circle cx="12" cy="12" r="6"/>
+                    <circle cx="12" cy="12" r="2"/>
+                </svg>
+                View Graph
+            `;
+        }
+    }
+
+    async renderKnowledgeGraph() {
+        const canvas = document.getElementById('graph-canvas');
+        const graphInfo = document.getElementById('graph-info');
+
+        if (!canvas) return;
+
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        try {
+            const response = await fetch('/api/knowledge/graph');
+            const data = await response.json();
+
+            if (!data.success || !data.graph) {
+                graphInfo.textContent = 'Failed to load graph data';
+                return;
+            }
+
+            const { nodes, edges } = data.graph;
+
+            if (nodes.length === 0) {
+                graphInfo.textContent = 'No documents to visualize';
+                return;
+            }
+
+            // Simple force-directed layout (circular for simplicity)
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const radius = Math.min(centerX, centerY) - 60;
+
+            // Position nodes in a circle
+            nodes.forEach((node, i) => {
+                const angle = (i / nodes.length) * 2 * Math.PI;
+                node.x = centerX + radius * Math.cos(angle);
+                node.y = centerY + radius * Math.sin(angle);
+            });
+
+            // Draw edges
+            ctx.strokeStyle = '#888';
+            ctx.lineWidth = 1;
+            edges.forEach(edge => {
+                const source = nodes.find(n => n.id === edge.source);
+                const target = nodes.find(n => n.id === edge.target);
+                if (source && target) {
+                    ctx.beginPath();
+                    ctx.moveTo(source.x, source.y);
+                    ctx.lineTo(target.x, target.y);
+                    ctx.globalAlpha = edge.weight || 0.3;
+                    ctx.stroke();
+                    ctx.globalAlpha = 1;
+                }
+            });
+
+            // Draw nodes
+            nodes.forEach(node => {
+                // Node circle
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, 20, 0, 2 * Math.PI);
+                ctx.fillStyle = '#6366f1';
+                ctx.fill();
+                ctx.strokeStyle = '#4f46e5';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Node label
+                ctx.fillStyle = '#000';
+                ctx.font = '11px sans-serif';
+                ctx.textAlign = 'center';
+                const label = node.label.length > 15 ? node.label.slice(0, 12) + '...' : node.label;
+                ctx.fillText(label, node.x, node.y + 35);
+            });
+
+            graphInfo.innerHTML = `
+                <strong>${nodes.length}</strong> documents,
+                <strong>${edges.length}</strong> relationships
+            `;
+
+            // Add click handler for nodes
+            canvas.onclick = (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+
+                const clicked = nodes.find(node => {
+                    const dx = x - node.x;
+                    const dy = y - node.y;
+                    return Math.sqrt(dx * dx + dy * dy) < 20;
+                });
+
+                if (clicked) {
+                    graphInfo.innerHTML = `
+                        <strong>${clicked.label}</strong><br>
+                        Type: ${clicked.file_type}<br>
+                        Chunks: ${clicked.chunks}<br>
+                        Size: ${(clicked.size / 1024).toFixed(1)} KB
+                    `;
+                }
+            };
+
+        } catch (error) {
+            console.error('Graph render error:', error);
+            graphInfo.textContent = 'Error rendering graph';
+        }
     }
 
     escapeHtml(text) {

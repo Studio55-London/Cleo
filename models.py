@@ -221,6 +221,7 @@ class Message(db.Model):
     agent_tier = db.Column(db.String(50))   # For agent messages
     content = db.Column(db.Text, nullable=False)
     mentions = db.Column(db.Text)  # JSON string of mentioned agents
+    citations = db.Column(db.Text)  # JSON string of retrieved document sources
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
     def get_mentions(self):
@@ -235,6 +236,19 @@ class Message(db.Model):
     def set_mentions(self, mentions_list):
         """Set list of mentions"""
         self.mentions = json.dumps(mentions_list)
+
+    def get_citations(self):
+        """Get list of document citations"""
+        if not self.citations:
+            return []
+        try:
+            return json.loads(self.citations)
+        except:
+            return []
+
+    def set_citations(self, citations_list):
+        """Set list of document citations"""
+        self.citations = json.dumps(citations_list)
 
     def to_dict(self):
         """Convert message to dictionary"""
@@ -255,6 +269,11 @@ class Message(db.Model):
         mentions = self.get_mentions()
         if mentions:
             result['mentions'] = mentions
+
+        # Add citations if present
+        citations = self.get_citations()
+        if citations:
+            result['citations'] = citations
 
         return result
 
@@ -324,7 +343,7 @@ class DocumentChunk(db.Model):
     content = db.Column(db.Text, nullable=False)  # The actual text chunk
     token_count = db.Column(db.Integer)
     embedding = db.Column(db.Text)  # JSON-serialized vector embedding
-    metadata = db.Column(db.Text)  # JSON metadata (page number, section, etc.)
+    chunk_metadata = db.Column(db.Text)  # JSON metadata (page number, section, etc.)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def set_embedding(self, vector):
@@ -340,12 +359,12 @@ class DocumentChunk(db.Model):
     def set_metadata(self, data):
         """Store metadata as JSON"""
         import json
-        self.metadata = json.dumps(data)
+        self.chunk_metadata = json.dumps(data)
 
     def get_metadata(self):
         """Retrieve metadata as dict"""
         import json
-        return json.loads(self.metadata) if self.metadata else {}
+        return json.loads(self.chunk_metadata) if self.chunk_metadata else {}
 
     def to_dict(self):
         return {

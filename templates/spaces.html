@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cleo - AI Agent Workspace</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/spaces.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/spaces.css') }}?v=6">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -325,21 +325,108 @@
                             </div>
                         </div>
 
-                        <!-- Documents List -->
+                        <!-- Search Knowledge -->
                         <div class="knowledge-group">
                             <div class="group-header">
-                                <h2>Your Documents</h2>
-                                <span class="document-count" id="document-count">0</span>
+                                <h2>Search Knowledge</h2>
+                                <button class="btn-text" id="toggle-filters-btn">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                                        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+                                    </svg>
+                                    Filters
+                                </button>
                             </div>
-                            <div class="documents-list" id="documents-list">
-                                <p class="placeholder-text">No documents uploaded yet</p>
+
+                            <!-- Advanced Filters -->
+                            <div class="search-filters" id="search-filters" style="display: none;">
+                                <div class="filter-row">
+                                    <div class="filter-group">
+                                        <label>File Types</label>
+                                        <div class="filter-checkboxes">
+                                            <label><input type="checkbox" value="pdf" checked> PDF</label>
+                                            <label><input type="checkbox" value="docx" checked> DOCX</label>
+                                            <label><input type="checkbox" value="txt" checked> TXT</label>
+                                            <label><input type="checkbox" value="md" checked> MD</label>
+                                        </div>
+                                    </div>
+                                    <div class="filter-group">
+                                        <label>Date Range</label>
+                                        <div class="filter-dates">
+                                            <input type="date" id="date-from" placeholder="From">
+                                            <input type="date" id="date-to" placeholder="To">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="search-container">
+                                <div class="search-input-wrapper">
+                                    <input
+                                        type="text"
+                                        id="knowledge-search-input"
+                                        class="knowledge-search-input"
+                                        placeholder="Ask a question about your documents..."
+                                    />
+                                    <button class="btn-search" id="knowledge-search-btn">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <circle cx="11" cy="11" r="8"/>
+                                            <path d="m21 21-4.35-4.35"/>
+                                        </svg>
+                                        Search
+                                    </button>
+                                </div>
+                                <div class="search-results" id="search-results" style="display: none;">
+                                    <div class="search-results-header">
+                                        <h3 id="search-results-title">Search Results</h3>
+                                        <div class="search-actions">
+                                            <button class="btn-secondary btn-sm" id="export-results-btn">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                                    <polyline points="7 10 12 15 17 10"/>
+                                                    <line x1="12" y1="15" x2="12" y2="3"/>
+                                                </svg>
+                                                Export CSV
+                                            </button>
+                                            <button class="btn-text" id="clear-search-btn">Clear</button>
+                                        </div>
+                                    </div>
+                                    <div class="search-results-list" id="search-results-list">
+                                        <!-- Search results will be appended here -->
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
-                        <!-- Knowledge Graph Stats -->
+                        <!-- Knowledge Graph Visualization -->
                         <div class="knowledge-group">
                             <div class="group-header">
                                 <h2>Knowledge Graph</h2>
+                                <button class="btn-primary btn-sm" id="view-graph-btn">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;">
+                                        <circle cx="12" cy="12" r="10"/>
+                                        <circle cx="12" cy="12" r="6"/>
+                                        <circle cx="12" cy="12" r="2"/>
+                                    </svg>
+                                    View Graph
+                                </button>
+                            </div>
+                            <div id="graph-container" style="display: none;">
+                                <div class="graph-canvas-wrapper">
+                                    <canvas id="graph-canvas" width="800" height="500"></canvas>
+                                    <div class="graph-legend">
+                                        <div class="legend-item">
+                                            <div class="legend-color" style="background: var(--color-accent);"></div>
+                                            <span>Documents</span>
+                                        </div>
+                                        <div class="legend-item">
+                                            <div class="legend-color" style="background: var(--color-text-tertiary); height: 2px;"></div>
+                                            <span>Relationships</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="graph-info" id="graph-info">
+                                    Click on nodes to see document details
+                                </div>
                             </div>
                             <div class="knowledge-stats">
                                 <div class="stat-card">
@@ -354,6 +441,17 @@
                                     <div class="stat-value" id="stat-relations">0</div>
                                     <div class="stat-label">Relations</div>
                                 </div>
+                            </div>
+                        </div>
+
+                        <!-- Documents List -->
+                        <div class="knowledge-group">
+                            <div class="group-header">
+                                <h2>Your Documents</h2>
+                                <span class="document-count" id="document-count">0</span>
+                            </div>
+                            <div class="documents-list" id="documents-list">
+                                <p class="placeholder-text">No documents uploaded yet</p>
                             </div>
                         </div>
                     </div>
@@ -529,6 +627,180 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/spaces.js') }}"></script>
+    <!-- Scan Folder Modal -->
+    <div class="modal" id="scan-folder-modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Scan Folder for Documents</h2>
+                <button class="modal-close" id="close-scan-modal">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 16px; color: var(--color-text-secondary);">
+                    Enter a folder path to scan for documents. The system will recursively search for PDF, DOCX, TXT, and MD files.
+                </p>
+                <div class="form-group">
+                    <label for="folder-path-input">Folder Path</label>
+                    <input
+                        type="text"
+                        id="folder-path-input"
+                        class="form-input"
+                        placeholder="C:\Documents\Knowledge Base"
+                    />
+                </div>
+                <div id="scan-progress" style="display: none; margin-top: 16px;">
+                    <div class="progress-header">
+                        <span id="scan-status">Scanning folder...</span>
+                        <span id="scan-count">0 files found</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="scan-progress-fill"></div>
+                    </div>
+                </div>
+                <div id="scan-results" style="display: none; margin-top: 16px;">
+                    <!-- Results will be displayed here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="cancel-scan-btn">Cancel</button>
+                <button class="btn-primary" id="start-scan-btn">Scan Folder</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Todoist Configuration Modal -->
+    <div class="modal" id="todoist-config-modal">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Configure Todoist Integration</h2>
+                <button class="btn-icon modal-close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 16px; color: var(--color-text-secondary);">
+                    Connect your Todoist account to sync tasks and projects with Cleo.
+                </p>
+                <div class="form-group">
+                    <label for="todoist-api-token">API Token</label>
+                    <input
+                        type="password"
+                        id="todoist-api-token"
+                        placeholder="Enter your Todoist API token"
+                        value="sk_test_51234567890abcdef"
+                        disabled
+                    >
+                    <small style="display: block; margin-top: 8px; color: var(--color-text-tertiary);">
+                        Get your API token from Todoist Settings → Integrations
+                    </small>
+                </div>
+                <div class="form-group">
+                    <label>Sync Settings</label>
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+                            <input type="checkbox" checked disabled>
+                            <span>Auto-sync tasks every 5 minutes</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+                            <input type="checkbox" checked disabled>
+                            <span>Create Todoist tasks from agent activities</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+                            <input type="checkbox" disabled>
+                            <span>Sync completed tasks back to Cleo</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="todoist-default-project">Default Project</label>
+                    <select id="todoist-default-project" style="width: 100%; padding: 8px; border: 1px solid var(--color-border); border-radius: 6px;" disabled>
+                        <option>Cleo Tasks</option>
+                        <option>Work</option>
+                        <option>Personal</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary modal-close">Cancel</button>
+                <button class="btn-primary" id="save-todoist-config">Save Configuration</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Telegram Configuration Modal -->
+    <div class="modal" id="telegram-config-modal">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Configure Telegram Integration</h2>
+                <button class="btn-icon modal-close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 16px; color: var(--color-text-secondary);">
+                    Connect your Telegram bot to interact with agents via Telegram.
+                </p>
+                <div class="form-group">
+                    <label for="telegram-bot-token">Bot Token</label>
+                    <input
+                        type="password"
+                        id="telegram-bot-token"
+                        placeholder="Enter your Telegram bot token"
+                        value="1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
+                        disabled
+                    >
+                    <small style="display: block; margin-top: 8px; color: var(--color-text-tertiary);">
+                        Get your bot token from @BotFather on Telegram
+                    </small>
+                </div>
+                <div class="form-group">
+                    <label for="telegram-chat-id">Chat ID (Optional)</label>
+                    <input
+                        type="text"
+                        id="telegram-chat-id"
+                        placeholder="Enter your Telegram chat ID"
+                        value="987654321"
+                        disabled
+                    >
+                    <small style="display: block; margin-top: 8px; color: var(--color-text-tertiary);">
+                        Leave empty to allow any user to interact with the bot
+                    </small>
+                </div>
+                <div class="form-group">
+                    <label>Notification Settings</label>
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+                            <input type="checkbox" checked disabled>
+                            <span>Send notifications for completed tasks</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+                            <input type="checkbox" checked disabled>
+                            <span>Send daily activity summaries</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+                            <input type="checkbox" disabled>
+                            <span>Send alerts for failed jobs</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary modal-close">Cancel</button>
+                <button class="btn-primary" id="save-telegram-config">Save Configuration</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/spaces.js') }}?v=11"></script>
 </body>
 </html>
