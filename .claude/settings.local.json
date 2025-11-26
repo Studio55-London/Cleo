@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "WebFetch(domain:devblogs.microsoft.com)",
+      "Bash(python app.py:*)",
+      "Bash(python -c:*)",
+      "Bash(curl:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(sqlite3:*)",
+      "Bash(timeout:*)",
+      "Bash(npm create:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tailwindcss:*)",
+      "Bash(npx shadcn@latest add input textarea avatar badge card dialog tabs dropdown-menu scroll-area popover skeleton separator tooltip -y)",
+      "Bash(npm run dev:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(npx shadcn@latest add:*)",
+      "Bash(taskkill:*)",
+      "Bash(powershell -Command \"Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force; Write-Host ''Stopped python processes''\")",
+      "Bash(powershell -Command \"Start-Sleep -Seconds 2; Invoke-RestMethod -Uri ''http://localhost:8080/api/integrations'' -Method Get | ConvertTo-Json\")",
+      "WebFetch(domain:www.claude.com)",
+      "Bash(cat:*)",
+      "Bash(tree:*)",
+      "Bash(python -m flask db:*)",
+      "Bash(alembic revision:*)",
+      "Bash(alembic upgrade:*)",
+      "Bash(alembic stamp:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

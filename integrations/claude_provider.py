@@ -177,6 +177,7 @@ class ClaudeAgent:
     """
     Base agent class using Claude
     Designed to work with Microsoft Agent Framework patterns
+    Supports skill-based behavior modification
     """
 
     def __init__(
@@ -185,7 +186,9 @@ class ClaudeAgent:
         instructions: str,
         tools: List[Dict] = None,
         model: str = None,
-        temperature: float = None
+        temperature: float = None,
+        agent_id: int = None,
+        skill_manager = None
     ):
         """
         Initialize a Claude-powered agent
@@ -196,18 +199,108 @@ class ClaudeAgent:
             tools: List of tool definitions
             model: Claude model to use
             temperature: Sampling temperature
+            agent_id: Database agent ID for skill lookup
+            skill_manager: SkillManager instance for skill retrieval
         """
         self.name = name
-        self.instructions = instructions
+        self.base_instructions = instructions
         self.tools = tools or []
         self.model = model or CLAUDE_MODEL
         self.temperature = temperature or AGENT_CONFIG.get('temperature', 0.7)
+        self.agent_id = agent_id
+        self.skill_manager = skill_manager
 
         # Initialize Claude provider
         self.provider = ClaudeProvider(model=self.model)
 
         # Conversation history (thread)
         self.messages = []
+
+        # Cache for active skills
+        self._skills_cache = None
+        self._skills_summary_cache = None
+
+    @property
+    def instructions(self) -> str:
+        """
+        Get combined instructions with skill summaries.
+        Skills are added at the end of base instructions.
+        """
+        if not self.agent_id or not self.skill_manager:
+            return self.base_instructions
+
+        try:
+            # Get skill summaries if not cached
+            if self._skills_summary_cache is None:
+                self._skills_summary_cache = self.skill_manager.get_skill_summaries(self.agent_id)
+
+            if self._skills_summary_cache:
+                return f"{self.base_instructions}\n\n{self._skills_summary_cache}"
+        except Exception as e:
+            logger.warning(f"[{self.name}] Failed to load skill summaries: {e}")
+
+        return self.base_instructions
+
+    def refresh_skills(self):
+        """Refresh the skills cache - call when skills are updated"""
+        self._skills_cache = None
+        self._skills_summary_cache = None
+
+    def get_active_skills(self) -> List[Any]:
+        """Get active skills for this agent"""
+        if not self.agent_id or not self.skill_manager:
+            return []
+
+        try:
+            if self._skills_cache is None:
+                self._skills_cache = self.skill_manager.get_skills_for_agent(self.agent_id)
+            return self._skills_cache
+        except Exception as e:
+            logger.warning(f"[{self.name}] Failed to load skills: {e}")
+            return []
+
+    def detect_skills_for_message(self, message: str) -> List[Any]:
+        """
+        Detect which skills are relevant for a given user message.
+
+        Args:
+            message: User message to analyze
+
+        Returns:
+            List of relevant skills
+        """
+        if not self.agent_id or not self.skill_manager:
+            return []
+
+        try:
+            return self.skill_manager.detect_relevant_skills(message, self.agent_id)
+        except Exception as e:
+            logger.warning(f"[{self.name}] Failed to detect skills: {e}")
+            return []
+
+    def _build_system_prompt_with_skills(self, input_text: str) -> str:
+        """
+        Build system prompt with relevant skill content injected.
+
+        For progressive disclosure: skill summaries are always present,
+        but full skill content is only included when relevant to the message.
+        """
+        system_prompt = self.instructions
+
+        # Detect relevant skills for this specific message
+        relevant_skills = self.detect_skills_for_message(input_text)
+
+        if relevant_skills:
+            skill_contents = []
+            for skill in relevant_skills:
+                skill_contents.append(f"\n## Active Skill: {skill.display_name}\n{skill.content}")
+
+            if skill_contents:
+                system_prompt += "\n\n# Active Skills for This Request\n"
+                system_prompt += "The following skills are relevant to the user's current request. Follow their instructions:\n"
+                system_prompt += "\n".join(skill_contents)
+
+        return system_prompt
 
     def run(self, input_text: str, context: Dict = None) -> str:
         """
@@ -229,10 +322,13 @@ class ClaudeAgent:
 
             logger.info(f"[{self.name}] Processing user input: {input_text[:50]}...")
 
+            # Build system prompt with skill injection
+            system_prompt = self._build_system_prompt_with_skills(input_text)
+
             # Call Claude API
             response = self.provider.create_message(
                 messages=self.messages,
-                system=self.instructions,
+                system=system_prompt,
                 tools=self.tools if self.tools else None,
                 temperature=self.temperature
             )
@@ -291,10 +387,13 @@ class ClaudeAgent:
             'content': input_text
         })
 
+        # Build system prompt with skill injection
+        system_prompt = self._build_system_prompt_with_skills(input_text)
+
         # Call Claude API asynchronously
         response = await self.provider.create_message_async(
             messages=self.messages,
-            system=self.instructions,
+            system=system_prompt,
             tools=self.tools if self.tools else None,
             temperature=self.temperature
         )

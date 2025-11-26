@@ -5,7 +5,20 @@ import os
 import re
 from datetime import datetime, timezone
 from app import app, db
-from models import Agent
+from models import Agent, Space
+
+
+def sync_personal_agent_to_spaces(agent_id):
+    """Add a new Personal agent to all existing Personal spaces"""
+    personal_spaces = Space.query.filter_by(name='Personal').all()
+    for space in personal_spaces:
+        current_ids = space.get_agents()
+        if agent_id not in current_ids:
+            current_ids.append(agent_id)
+            space.set_agents(current_ids)
+            print(f"  [SYNC] Added agent {agent_id} to Personal space {space.id}")
+    if personal_spaces:
+        db.session.commit()
 
 def parse_manifest(file_path):
     """Parse a Prompt-Manifest.md file and extract agent info"""
@@ -92,6 +105,10 @@ def import_agents():
 
                 print(f"[OK] Created: {agent_data['name']} ({agent_data['type']})")
                 agents_created.append(agent_data['name'])
+
+                # If Personal agent, sync to existing Personal spaces
+                if agent_data['type'].lower() == 'personal':
+                    sync_personal_agent_to_spaces(new_agent.id)
 
             except Exception as e:
                 print(f"[ERROR] Error processing {manifest_path}: {str(e)}")

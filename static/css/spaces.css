@@ -629,6 +629,22 @@ body {
     background: var(--color-bg-hover);
 }
 
+.btn-link {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: var(--color-primary);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    text-decoration: none;
+    transition: color 0.15s ease;
+}
+
+.btn-link:hover {
+    color: var(--color-primary-hover, #7c3aed);
+    text-decoration: underline;
+}
+
 .btn-icon {
     background: transparent;
     border: none;

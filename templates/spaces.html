@@ -590,6 +590,26 @@
                     <textarea id="space-description" rows="3" placeholder="What's this space for?"></textarea>
                 </div>
                 <div class="form-group">
+                    <label for="space-master-agent">Master Agent</label>
+                    <select id="space-master-agent">
+                        <option value="">Select or create a master agent...</option>
+                        <!-- Options populated dynamically -->
+                    </select>
+                    <div class="create-agent-option" style="margin-top: 8px;">
+                        <button type="button" class="btn-link" id="create-master-agent-btn">+ Create new master agent</button>
+                    </div>
+                </div>
+                <div class="form-group" id="new-master-agent-form" style="display: none; padding: 12px; background: var(--bg-secondary); border-radius: 8px; margin-top: 8px;">
+                    <div class="form-group">
+                        <label for="new-master-agent-name">Agent Name</label>
+                        <input type="text" id="new-master-agent-name" placeholder="e.g., Project Lead">
+                    </div>
+                    <div class="form-group">
+                        <label for="new-master-agent-desc">Description</label>
+                        <textarea id="new-master-agent-desc" rows="2" placeholder="What does this agent do?"></textarea>
+                    </div>
+                </div>
+                <div class="form-group">
                     <label>Add Agents</label>
                     <div class="agent-grid" id="modal-agent-grid">
                         <!-- Agent selection grid -->

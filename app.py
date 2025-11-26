@@ -8,10 +8,17 @@ from datetime import datetime
 from flask import Flask, render_template, jsonify, request, redirect, url_for, session
 from flask_cors import CORS
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
-from models import db, User, Agent, Job, Activity, Space, Message, Document, DocumentChunk, Entity, Relation
+from models import db, User, Agent, Job, Activity, Space, Message, Document, DocumentChunk, Entity, Relation, Integration, Skill, Task, Notification, CalendarEvent, TaskTemplate, seed_integrations
+from services.task_service import TaskService
+from services.calendar_service import CalendarService
+from services.notification_service import NotificationService
+from services.template_service import TaskTemplateService
 from agents import get_agent, list_agent_names, agent_count
 from knowledge_processor import get_processor
 from vector_store import get_vector_store
+from integrations.todoist_helper import get_todoist_context
+from skills.skill_manager import init_skill_manager, get_skill_manager
+from skills.skill_parser import SkillParser, SkillParserError
 from werkzeug.utils import secure_filename
 import json
 
@@ -70,6 +77,60 @@ def dashboard():
     return render_template('dashboard.html')
 
 # ===================================
+# Helper Functions
+# ===================================
+
+def get_personal_agent_ids():
+    """Get all agent IDs with Personal tier"""
+    personal_agents = Agent.query.filter(
+        db.func.lower(Agent.type) == 'personal'
+    ).all()
+    return [agent.id for agent in personal_agents]
+
+
+def create_default_personal_space(user_id=None):
+    """Create a default Personal space with all Personal tier agents"""
+    # Check if Personal space already exists
+    existing = Space.query.filter_by(name='Personal').first()
+    if existing:
+        # Update with any new Personal agents
+        current_ids = set(existing.get_agents())
+        personal_ids = set(get_personal_agent_ids())
+        if personal_ids - current_ids:  # New agents to add
+            existing.set_agents(list(current_ids | personal_ids))
+            db.session.commit()
+            logger.info(f"Updated Personal space with new agents: {personal_ids - current_ids}")
+        return existing
+
+    # Create new Personal space
+    personal_agent_ids = get_personal_agent_ids()
+    space = Space(
+        name='Personal',
+        description='Your personal space with Coach and HealthFit agents for personal development, goal setting, health, and wellness.'
+    )
+    space.set_agents(personal_agent_ids)
+    db.session.add(space)
+    db.session.commit()
+    logger.info(f"Created default Personal space with agents: {personal_agent_ids}")
+    return space
+
+
+def sync_personal_agents_to_spaces():
+    """Ensure all Personal spaces have all Personal tier agents"""
+    personal_agent_ids = set(get_personal_agent_ids())
+    personal_spaces = Space.query.filter_by(name='Personal').all()
+
+    for space in personal_spaces:
+        current_ids = set(space.get_agents())
+        if personal_agent_ids - current_ids:  # Missing agents
+            space.set_agents(list(current_ids | personal_agent_ids))
+            logger.info(f"Synced Personal space {space.id} with agents: {personal_agent_ids}")
+
+    if personal_spaces:
+        db.session.commit()
+
+
+# ===================================
 # API Routes - Authentication
 # ===================================
 
@@ -113,6 +174,9 @@ def register():
         login_user(user)
         user.last_login = datetime.now()
         db.session.commit()
+
+        # Create default Personal space for the user
+        create_default_personal_space(user.id)
 
         logger.info(f"New user registered: {username}")
 
@@ -284,9 +348,21 @@ def get_agent_info(agent_name):
 
 @app.route('/api/spaces', methods=['GET'])
 def get_spaces():
-    """Get all spaces"""
+    """Get all spaces with custom ordering: Chat with Cleo first, Personal second, then alphabetically"""
     try:
-        spaces = Space.query.order_by(Space.updated_at.desc()).all()
+        spaces = Space.query.all()
+
+        # Custom sort: "Chat with Cleo" first, "Personal" second, then alphabetical
+        def space_sort_key(space):
+            name = space.name.lower()
+            if name == 'chat with cleo':
+                return (0, '')  # First
+            elif name == 'personal':
+                return (1, '')  # Second
+            else:
+                return (2, name)  # Alphabetical
+
+        spaces.sort(key=space_sort_key)
         spaces_list = [space.to_dict() for space in spaces]
 
         return jsonify({
@@ -317,6 +393,17 @@ def create_space():
             name=data['name'],
             description=data.get('description', '')
         )
+
+        # Set master agent if provided
+        if data.get('master_agent_id'):
+            master_agent = db.session.get(Agent, int(data['master_agent_id']))
+            if master_agent:
+                space.master_agent_id = master_agent.id
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': 'Master agent not found'
+                }), 404
 
         # Set agent IDs
         agent_ids = data.get('agent_ids', [])
@@ -387,6 +474,20 @@ def update_space(space_id):
             space.name = data['name']
         if 'description' in data:
             space.description = data['description']
+
+        # Update master agent if provided
+        if 'master_agent_id' in data:
+            if data['master_agent_id'] is None:
+                space.master_agent_id = None
+            else:
+                master_agent = db.session.get(Agent, int(data['master_agent_id']))
+                if master_agent:
+                    space.master_agent_id = master_agent.id
+                else:
+                    return jsonify({
+                        'success': False,
+                        'message': 'Master agent not found'
+                    }), 404
 
         space.updated_at = datetime.now()
 
@@ -644,10 +745,35 @@ def send_message(space_id):
                     except Exception as e:
                         logger.warning(f"Knowledge retrieval failed: {e}")
 
-                    # Prepare message for agent (with knowledge context if available)
+                    # Get integration context (Todoist tasks if connected)
+                    integration_context = None
+                    try:
+                        # Check if Todoist is connected and get tasks
+                        todoist_integration = Integration.query.filter_by(name='todoist').first()
+                        if todoist_integration and todoist_integration.status == 'connected':
+                            todoist_config = todoist_integration.get_config()
+                            api_token = todoist_config.get('api_token')
+                            if api_token:
+                                # Only fetch Todoist context if message mentions tasks/todo/todoist
+                                task_keywords = ['task', 'todo', 'todoist', 'priority', 'due', 'deadline', 'schedule', 'what do i have', 'what am i working on', 'my tasks', 'assignments']
+                                if any(kw in clean_message.lower() for kw in task_keywords):
+                                    integration_context = get_todoist_context(api_token)
+                                    logger.info("Todoist context injected into agent message")
+                    except Exception as e:
+                        logger.warning(f"Integration context retrieval failed: {e}")
+
+                    # Prepare message for agent (with knowledge and integration context)
                     agent_message = clean_message
+                    context_parts_list = []
+
                     if knowledge_context:
-                        agent_message = knowledge_context + "User question: " + clean_message
+                        context_parts_list.append(knowledge_context)
+
+                    if integration_context:
+                        context_parts_list.append(integration_context)
+
+                    if context_parts_list:
+                        agent_message = "\n".join(context_parts_list) + "\nUser question: " + clean_message
 
                     # Send to agent
                     response_text = agent_instance.run(agent_message)
@@ -1486,6 +1612,839 @@ def get_status():
         }), 500
 
 # ===================================
+# API Routes - Integrations (CRUD)
+# ===================================
+
+@app.route('/api/integrations', methods=['GET'])
+def get_integrations():
+    """Get all integrations"""
+    try:
+        category = request.args.get('category')
+
+        query = Integration.query
+        if category:
+            query = query.filter_by(category=category)
+
+        integrations = query.order_by(Integration.category, Integration.display_name).all()
+
+        return jsonify({
+            'success': True,
+            'integrations': [i.to_dict() for i in integrations]
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/integrations/<integration_id>', methods=['GET'])
+def get_integration(integration_id):
+    """Get a specific integration"""
+    try:
+        # Support lookup by ID or name
+        if integration_id.isdigit():
+            integration = db.session.get(Integration, int(integration_id))
+        else:
+            integration = Integration.query.filter_by(name=integration_id).first()
+
+        if not integration:
+            return jsonify({
+                'success': False,
+                'message': 'Integration not found'
+            }), 404
+
+        return jsonify({
+            'success': True,
+            'integration': integration.to_dict()
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/integrations', methods=['POST'])
+def create_integration():
+    """Create a new integration"""
+    try:
+        data = request.get_json()
+
+        if not data.get('name'):
+            return jsonify({
+                'success': False,
+                'message': 'Integration name is required'
+            }), 400
+
+        # Check if integration already exists
+        existing = Integration.query.filter_by(name=data['name']).first()
+        if existing:
+            return jsonify({
+                'success': False,
+                'message': 'Integration with this name already exists'
+            }), 400
+
+        integration = Integration(
+            name=data['name'],
+            display_name=data.get('display_name', data['name'].title()),
+            description=data.get('description', ''),
+            category=data.get('category', 'other'),
+            icon=data.get('icon', 'default'),
+            enabled=data.get('enabled', False)
+        )
+
+        if data.get('config'):
+            integration.set_config(data['config'])
+
+        db.session.add(integration)
+        db.session.commit()
+
+        logger.info(f"Created integration: {integration.name}")
+
+        return jsonify({
+            'success': True,
+            'integration': integration.to_dict(),
+            'message': 'Integration created successfully'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/integrations/<integration_id>', methods=['PUT'])
+def update_integration(integration_id):
+    """Update an integration"""
+    try:
+        # Support lookup by ID or name
+        if integration_id.isdigit():
+            integration = db.session.get(Integration, int(integration_id))
+        else:
+            integration = Integration.query.filter_by(name=integration_id).first()
+
+        if not integration:
+            return jsonify({
+                'success': False,
+                'message': 'Integration not found'
+            }), 404
+
+        data = request.get_json()
+
+        # Update fields
+        if 'display_name' in data:
+            integration.display_name = data['display_name']
+        if 'description' in data:
+            integration.description = data['description']
+        if 'category' in data:
+            integration.category = data['category']
+        if 'icon' in data:
+            integration.icon = data['icon']
+        if 'enabled' in data:
+            integration.enabled = data['enabled']
+        if 'status' in data:
+            integration.status = data['status']
+        if 'error_message' in data:
+            integration.error_message = data['error_message']
+
+        # Update config (merge with existing)
+        if 'config' in data:
+            existing_config = integration.get_config()
+            existing_config.update(data['config'])
+            integration.set_config(existing_config)
+
+        db.session.commit()
+
+        logger.info(f"Updated integration: {integration.name}")
+
+        return jsonify({
+            'success': True,
+            'integration': integration.to_dict(),
+            'message': 'Integration updated successfully'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/integrations/<integration_id>', methods=['DELETE'])
+def delete_integration(integration_id):
+    """Delete an integration"""
+    try:
+        # Support lookup by ID or name
+        if integration_id.isdigit():
+            integration = db.session.get(Integration, int(integration_id))
+        else:
+            integration = Integration.query.filter_by(name=integration_id).first()
+
+        if not integration:
+            return jsonify({
+                'success': False,
+                'message': 'Integration not found'
+            }), 404
+
+        name = integration.name
+        db.session.delete(integration)
+        db.session.commit()
+
+        logger.info(f"Deleted integration: {name}")
+
+        return jsonify({
+            'success': True,
+            'message': f'Integration {name} deleted successfully'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/integrations/<integration_id>/connect', methods=['POST'])
+def connect_integration(integration_id):
+    """Connect/enable an integration with configuration"""
+    try:
+        # Support lookup by ID or name
+        if integration_id.isdigit():
+            integration = db.session.get(Integration, int(integration_id))
+        else:
+            integration = Integration.query.filter_by(name=integration_id).first()
+
+        if not integration:
+            return jsonify({
+                'success': False,
+                'message': 'Integration not found'
+            }), 404
+
+        data = request.get_json() or {}
+
+        # Update config if provided
+        if 'config' in data:
+            existing_config = integration.get_config()
+            existing_config.update(data['config'])
+            integration.set_config(existing_config)
+
+        # Validate and test connection based on integration type
+        config = integration.get_config()
+        validation_result = validate_integration_config(integration.name, config)
+
+        if validation_result['valid']:
+            integration.enabled = True
+            integration.status = 'connected'
+            integration.error_message = None
+            integration.last_sync = datetime.utcnow()
+            message = f'{integration.display_name} connected successfully'
+        else:
+            integration.enabled = False
+            integration.status = 'error'
+            integration.error_message = validation_result['message']
+            message = validation_result['message']
+
+        db.session.commit()
+
+        return jsonify({
+            'success': validation_result['valid'],
+            'integration': integration.to_dict(),
+            'message': message
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/integrations/<integration_id>/disconnect', methods=['POST'])
+def disconnect_integration(integration_id):
+    """Disconnect/disable an integration"""
+    try:
+        # Support lookup by ID or name
+        if integration_id.isdigit():
+            integration = db.session.get(Integration, int(integration_id))
+        else:
+            integration = Integration.query.filter_by(name=integration_id).first()
+
+        if not integration:
+            return jsonify({
+                'success': False,
+                'message': 'Integration not found'
+            }), 404
+
+        integration.enabled = False
+        integration.status = 'disconnected'
+        integration.error_message = None
+
+        db.session.commit()
+
+        logger.info(f"Disconnected integration: {integration.name}")
+
+        return jsonify({
+            'success': True,
+            'integration': integration.to_dict(),
+            'message': f'{integration.display_name} disconnected'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/integrations/<integration_id>/test', methods=['POST'])
+def test_integration(integration_id):
+    """Test an integration connection"""
+    try:
+        # Support lookup by ID or name
+        if integration_id.isdigit():
+            integration = db.session.get(Integration, int(integration_id))
+        else:
+            integration = Integration.query.filter_by(name=integration_id).first()
+
+        if not integration:
+            return jsonify({
+                'success': False,
+                'message': 'Integration not found'
+            }), 404
+
+        config = integration.get_config()
+        result = test_integration_connection(integration.name, config)
+
+        if result['success']:
+            integration.status = 'connected'
+            integration.error_message = None
+            integration.last_sync = datetime.utcnow()
+        else:
+            integration.status = 'error'
+            integration.error_message = result.get('message', 'Connection test failed')
+
+        db.session.commit()
+
+        return jsonify({
+            'success': result['success'],
+            'integration': integration.to_dict(),
+            'message': result.get('message', 'Connection test completed'),
+            'details': result.get('details')
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+def validate_integration_config(integration_name, config):
+    """Validate integration configuration"""
+    validators = {
+        'todoist': lambda c: bool(c.get('api_token')),
+        'telegram': lambda c: bool(c.get('bot_token')),
+        'microsoft_graph': lambda c: all([
+            c.get('tenant_id'),
+            c.get('client_id'),
+            c.get('client_secret')
+        ]),
+        'google_calendar': lambda c: bool(c.get('credentials')),
+        'slack': lambda c: bool(c.get('bot_token')),
+        'notion': lambda c: bool(c.get('api_key'))
+    }
+
+    required_fields = {
+        'todoist': ['api_token'],
+        'telegram': ['bot_token'],
+        'microsoft_graph': ['tenant_id', 'client_id', 'client_secret'],
+        'google_calendar': ['credentials'],
+        'slack': ['bot_token'],
+        'notion': ['api_key']
+    }
+
+    validator = validators.get(integration_name)
+    fields = required_fields.get(integration_name, [])
+
+    if not validator:
+        return {'valid': True, 'message': 'Configuration saved'}
+
+    if validator(config):
+        return {'valid': True, 'message': 'Configuration valid'}
+    else:
+        missing = [f for f in fields if not config.get(f)]
+        return {
+            'valid': False,
+            'message': f'Missing required fields: {", ".join(missing)}'
+        }
+
+
+def test_integration_connection(integration_name, config):
+    """Test actual connection to integration service"""
+    try:
+        if integration_name == 'todoist':
+            if not config.get('api_token'):
+                return {'success': False, 'message': 'API token not configured'}
+            # Test Todoist API
+            import requests
+            response = requests.get(
+                'https://api.todoist.com/rest/v2/projects',
+                headers={'Authorization': f'Bearer {config["api_token"]}'},
+                timeout=10
+            )
+            if response.status_code == 200:
+                projects = response.json()
+                return {
+                    'success': True,
+                    'message': f'Connected! Found {len(projects)} projects',
+                    'details': {'projects_count': len(projects)}
+                }
+            else:
+                return {'success': False, 'message': f'API error: {response.status_code}'}
+
+        elif integration_name == 'telegram':
+            if not config.get('bot_token'):
+                return {'success': False, 'message': 'Bot token not configured'}
+            # Test Telegram Bot API
+            import requests
+            response = requests.get(
+                f'https://api.telegram.org/bot{config["bot_token"]}/getMe',
+                timeout=10
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('ok'):
+                    bot_info = data.get('result', {})
+                    return {
+                        'success': True,
+                        'message': f'Connected to bot: @{bot_info.get("username")}',
+                        'details': {'bot_username': bot_info.get('username')}
+                    }
+            return {'success': False, 'message': 'Invalid bot token'}
+
+        elif integration_name == 'microsoft_graph':
+            if not all([config.get('tenant_id'), config.get('client_id'), config.get('client_secret')]):
+                return {'success': False, 'message': 'Missing Azure AD credentials'}
+            # Would need to implement OAuth flow - return placeholder
+            return {
+                'success': True,
+                'message': 'Configuration saved. OAuth flow required for full connection.',
+                'details': {'requires_oauth': True}
+            }
+
+        else:
+            return {
+                'success': True,
+                'message': 'Configuration saved',
+                'details': {}
+            }
+
+    except Exception as e:
+        return {'success': False, 'message': f'Connection error: {str(e)}'}
+
+
+# ===================================
+# API Routes - Skills
+# ===================================
+
+@app.route('/api/skills', methods=['GET'])
+def get_skills():
+    """Get all skills"""
+    try:
+        skills = Skill.query.all()
+        return jsonify({
+            'success': True,
+            'skills': [s.to_dict() for s in skills]
+        })
+    except Exception as e:
+        logger.error(f"Error getting skills: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/skills/<int:skill_id>', methods=['GET'])
+def get_skill(skill_id):
+    """Get a specific skill"""
+    try:
+        skill = Skill.query.get(skill_id)
+        if not skill:
+            return jsonify({
+                'success': False,
+                'message': 'Skill not found'
+            }), 404
+
+        return jsonify({
+            'success': True,
+            'skill': skill.to_dict()
+        })
+    except Exception as e:
+        logger.error(f"Error getting skill: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/skills', methods=['POST'])
+def create_skill():
+    """Create a new skill"""
+    try:
+        data = request.get_json()
+
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': 'No data provided'
+            }), 400
+
+        # Validate required fields
+        required = ['displayName', 'description', 'content']
+        missing = [f for f in required if not data.get(f)]
+        if missing:
+            return jsonify({
+                'success': False,
+                'message': f'Missing required fields: {", ".join(missing)}'
+            }), 400
+
+        # Parse and validate content
+        try:
+            frontmatter, body = SkillParser.parse(data['content'])
+        except SkillParserError as e:
+            return jsonify({
+                'success': False,
+                'message': f'Invalid skill content: {str(e)}'
+            }), 400
+
+        # Check for duplicate name
+        name = frontmatter['name']
+        existing = Skill.query.filter_by(name=name).first()
+        if existing:
+            return jsonify({
+                'success': False,
+                'message': f'Skill with name "{name}" already exists'
+            }), 400
+
+        # Create skill
+        skill = Skill(
+            name=name,
+            display_name=data['displayName'],
+            description=data['description'],
+            content=data['content'],
+            agent_id=data.get('agentId'),
+            is_global=data.get('isGlobal', False),
+            is_active=True,
+            category=data.get('category'),
+            version=frontmatter.get('version', '1.0.0'),
+            author=frontmatter.get('author', 'Cleo')
+        )
+        skill.set_triggers(data.get('triggers', []))
+
+        db.session.add(skill)
+        db.session.commit()
+
+        logger.info(f"Created skill: {name}")
+
+        return jsonify({
+            'success': True,
+            'skill': skill.to_dict()
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error creating skill: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/skills/<int:skill_id>', methods=['PUT'])
+def update_skill(skill_id):
+    """Update a skill"""
+    try:
+        skill = Skill.query.get(skill_id)
+        if not skill:
+            return jsonify({
+                'success': False,
+                'message': 'Skill not found'
+            }), 404
+
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': 'No data provided'
+            }), 400
+
+        # Update content if provided
+        if 'content' in data:
+            try:
+                frontmatter, body = SkillParser.parse(data['content'])
+                skill.name = frontmatter['name']
+                skill.content = data['content']
+                skill.version = frontmatter.get('version', skill.version)
+            except SkillParserError as e:
+                return jsonify({
+                    'success': False,
+                    'message': f'Invalid skill content: {str(e)}'
+                }), 400
+
+        # Update other fields
+        if 'displayName' in data:
+            skill.display_name = data['displayName']
+        if 'description' in data:
+            skill.description = data['description']
+        if 'agentId' in data:
+            skill.agent_id = data['agentId']
+        if 'isGlobal' in data:
+            skill.is_global = data['isGlobal']
+            if data['isGlobal']:
+                skill.agent_id = None
+        if 'isActive' in data:
+            skill.is_active = data['isActive']
+        if 'category' in data:
+            skill.category = data['category']
+        if 'triggers' in data:
+            skill.set_triggers(data['triggers'])
+
+        skill.updated_at = datetime.utcnow()
+        db.session.commit()
+
+        logger.info(f"Updated skill: {skill.name}")
+
+        return jsonify({
+            'success': True,
+            'skill': skill.to_dict()
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error updating skill: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/skills/<int:skill_id>', methods=['DELETE'])
+def delete_skill(skill_id):
+    """Delete a skill"""
+    try:
+        skill = Skill.query.get(skill_id)
+        if not skill:
+            return jsonify({
+                'success': False,
+                'message': 'Skill not found'
+            }), 404
+
+        name = skill.name
+        db.session.delete(skill)
+        db.session.commit()
+
+        logger.info(f"Deleted skill: {name}")
+
+        return jsonify({
+            'success': True,
+            'message': f'Skill "{name}" deleted'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error deleting skill: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/skills/global', methods=['GET'])
+def get_global_skills():
+    """Get all global skills"""
+    try:
+        skills = Skill.query.filter_by(is_global=True, is_active=True).all()
+        return jsonify({
+            'success': True,
+            'skills': [s.to_dict() for s in skills]
+        })
+    except Exception as e:
+        logger.error(f"Error getting global skills: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/skills/categories', methods=['GET'])
+def get_skill_categories():
+    """Get available skill categories"""
+    categories = [
+        {'id': 'productivity', 'name': 'Productivity', 'description': 'Task and workflow management'},
+        {'id': 'communication', 'name': 'Communication', 'description': 'Meetings, emails, and collaboration'},
+        {'id': 'analysis', 'name': 'Analysis', 'description': 'Data analysis and insights'},
+        {'id': 'coordination', 'name': 'Coordination', 'description': 'Multi-agent coordination'},
+        {'id': 'planning', 'name': 'Planning', 'description': 'Project and strategic planning'},
+        {'id': 'research', 'name': 'Research', 'description': 'Information gathering and synthesis'},
+        {'id': 'writing', 'name': 'Writing', 'description': 'Content creation and editing'},
+        {'id': 'finance', 'name': 'Finance', 'description': 'Financial analysis and reporting'},
+        {'id': 'legal', 'name': 'Legal', 'description': 'Legal documentation and compliance'},
+        {'id': 'marketing', 'name': 'Marketing', 'description': 'Marketing strategy and content'},
+        {'id': 'technical', 'name': 'Technical', 'description': 'Technical documentation and code'},
+        {'id': 'other', 'name': 'Other', 'description': 'Miscellaneous skills'}
+    ]
+    return jsonify({
+        'success': True,
+        'categories': categories
+    })
+
+
+@app.route('/api/skills/templates/<category>', methods=['GET'])
+def get_skill_template(category):
+    """Get a skill template for a category"""
+    try:
+        template = SkillParser.get_template(category)
+        return jsonify({
+            'success': True,
+            'template': template,
+            'category': category
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/agents/<int:agent_id>/skills', methods=['GET'])
+def get_agent_skills(agent_id):
+    """Get skills for a specific agent (includes global skills)"""
+    try:
+        agent = Agent.query.get(agent_id)
+        if not agent:
+            return jsonify({
+                'success': False,
+                'message': 'Agent not found'
+            }), 404
+
+        # Get agent-specific skills
+        agent_skills = Skill.query.filter_by(agent_id=agent_id, is_active=True).all()
+
+        # Get global skills
+        global_skills = Skill.query.filter_by(is_global=True, is_active=True).all()
+
+        # Combine and deduplicate
+        all_skills = agent_skills + global_skills
+
+        return jsonify({
+            'success': True,
+            'skills': [s.to_dict() for s in all_skills],
+            'agentSkills': [s.to_dict() for s in agent_skills],
+            'globalSkills': [s.to_dict() for s in global_skills]
+        })
+    except Exception as e:
+        logger.error(f"Error getting agent skills: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/agents/<int:agent_id>/skills', methods=['POST'])
+def assign_skill_to_agent(agent_id):
+    """Assign a skill to an agent"""
+    try:
+        agent = Agent.query.get(agent_id)
+        if not agent:
+            return jsonify({
+                'success': False,
+                'message': 'Agent not found'
+            }), 404
+
+        data = request.get_json()
+        skill_id = data.get('skillId')
+
+        if not skill_id:
+            return jsonify({
+                'success': False,
+                'message': 'Skill ID required'
+            }), 400
+
+        skill = Skill.query.get(skill_id)
+        if not skill:
+            return jsonify({
+                'success': False,
+                'message': 'Skill not found'
+            }), 404
+
+        if skill.is_global:
+            return jsonify({
+                'success': False,
+                'message': 'Cannot assign global skill to specific agent'
+            }), 400
+
+        skill.agent_id = agent_id
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'skill': skill.to_dict()
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error assigning skill: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/agents/<int:agent_id>/skills/<int:skill_id>', methods=['DELETE'])
+def unassign_skill_from_agent(agent_id, skill_id):
+    """Remove skill assignment from an agent"""
+    try:
+        skill = Skill.query.get(skill_id)
+        if not skill:
+            return jsonify({
+                'success': False,
+                'message': 'Skill not found'
+            }), 404
+
+        if skill.agent_id != agent_id:
+            return jsonify({
+                'success': False,
+                'message': 'Skill is not assigned to this agent'
+            }), 400
+
+        skill.agent_id = None
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': 'Skill unassigned from agent'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error unassigning skill: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+# ===================================
 # API Routes - Knowledge Base
 # ===================================
 
@@ -2187,6 +3146,554 @@ def export_search_results():
 
 
 # ===================================
+# API Routes - Tasks (AscendoreQ Integration)
+# ===================================
+
+@app.route('/api/tasks', methods=['GET'])
+def list_tasks():
+    """List all tasks with optional filtering"""
+    try:
+        space_id = request.args.get('space_id', type=int)
+        status = request.args.get('status', type=str)
+        priority = request.args.get('priority', type=str)
+        limit = request.args.get('limit', 100, type=int)
+
+        tasks = TaskService.list_tasks(
+            space_id=space_id,
+            status_filter=status,
+            priority_filter=priority,
+            limit=limit
+        )
+
+        return jsonify({
+            'success': True,
+            'tasks': [task.to_dict() for task in tasks],
+            'count': len(tasks)
+        })
+
+    except Exception as e:
+        logger.error(f"Error listing tasks: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/tasks', methods=['POST'])
+def create_task():
+    """Create a new task"""
+    try:
+        data = request.get_json()
+
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': 'No data provided'
+            }), 400
+
+        if not data.get('space_id'):
+            return jsonify({
+                'success': False,
+                'message': 'space_id is required'
+            }), 400
+
+        if not data.get('title'):
+            return jsonify({
+                'success': False,
+                'message': 'title is required'
+            }), 400
+
+        # Parse due_date if provided
+        due_date = None
+        if data.get('due_date'):
+            try:
+                due_date = datetime.fromisoformat(data['due_date'].replace('Z', '+00:00'))
+            except ValueError:
+                return jsonify({
+                    'success': False,
+                    'message': 'Invalid due_date format. Use ISO format.'
+                }), 400
+
+        task = TaskService.create_task(
+            space_id=data['space_id'],
+            title=data['title'],
+            description=data.get('description'),
+            priority=data.get('priority', 'medium'),
+            due_date=due_date
+        )
+
+        logger.info(f"Created task: {task.title} in space {task.space_id}")
+
+        return jsonify({
+            'success': True,
+            'task': task.to_dict()
+        }), 201
+
+    except ValueError as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 400
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error creating task: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/tasks/<int:task_id>', methods=['GET'])
+def get_task(task_id):
+    """Get a specific task by ID"""
+    try:
+        task = TaskService.get_task(task_id)
+
+        if not task:
+            return jsonify({
+                'success': False,
+                'message': 'Task not found'
+            }), 404
+
+        return jsonify({
+            'success': True,
+            'task': task.to_dict()
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting task {task_id}: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/tasks/<int:task_id>', methods=['PUT'])
+def update_task(task_id):
+    """Update a task"""
+    try:
+        data = request.get_json()
+
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': 'No data provided'
+            }), 400
+
+        # Parse due_date if provided
+        if 'due_date' in data and data['due_date']:
+            try:
+                data['due_date'] = datetime.fromisoformat(data['due_date'].replace('Z', '+00:00'))
+            except ValueError:
+                return jsonify({
+                    'success': False,
+                    'message': 'Invalid due_date format. Use ISO format.'
+                }), 400
+
+        task = TaskService.update_task(task_id, data)
+
+        if not task:
+            return jsonify({
+                'success': False,
+                'message': 'Task not found'
+            }), 404
+
+        logger.info(f"Updated task: {task.id} - {task.title}")
+
+        return jsonify({
+            'success': True,
+            'task': task.to_dict()
+        })
+
+    except ValueError as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 400
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error updating task {task_id}: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/tasks/<int:task_id>', methods=['DELETE'])
+def delete_task(task_id):
+    """Delete a task"""
+    try:
+        success = TaskService.delete_task(task_id)
+
+        if not success:
+            return jsonify({
+                'success': False,
+                'message': 'Task not found'
+            }), 404
+
+        logger.info(f"Deleted task: {task_id}")
+
+        return jsonify({
+            'success': True,
+            'message': 'Task deleted'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error deleting task {task_id}: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/tasks/<int:task_id>/complete', methods=['POST'])
+def complete_task(task_id):
+    """Mark a task as completed"""
+    try:
+        task = TaskService.complete_task(task_id)
+
+        if not task:
+            return jsonify({
+                'success': False,
+                'message': 'Task not found'
+            }), 404
+
+        logger.info(f"Completed task: {task.id} - {task.title}")
+
+        return jsonify({
+            'success': True,
+            'task': task.to_dict()
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error completing task {task_id}: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/tasks/stats', methods=['GET'])
+def get_task_stats():
+    """Get task statistics"""
+    try:
+        space_id = request.args.get('space_id', type=int)
+
+        stats = TaskService.get_task_stats(space_id)
+
+        return jsonify({
+            'success': True,
+            'stats': stats
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting task stats: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/tasks/overdue', methods=['GET'])
+def get_overdue_tasks():
+    """Get overdue tasks"""
+    try:
+        space_id = request.args.get('space_id', type=int)
+
+        tasks = TaskService.get_overdue_tasks(space_id)
+
+        return jsonify({
+            'success': True,
+            'tasks': [task.to_dict() for task in tasks],
+            'count': len(tasks)
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting overdue tasks: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/spaces/<int:space_id>/tasks', methods=['GET'])
+def get_space_tasks(space_id):
+    """Get all tasks for a specific space"""
+    try:
+        # Verify space exists
+        space = Space.query.get(space_id)
+        if not space:
+            return jsonify({
+                'success': False,
+                'message': 'Space not found'
+            }), 404
+
+        status = request.args.get('status', type=str)
+        priority = request.args.get('priority', type=str)
+
+        tasks = TaskService.list_tasks(
+            space_id=space_id,
+            status_filter=status,
+            priority_filter=priority
+        )
+
+        stats = TaskService.get_task_stats(space_id)
+
+        return jsonify({
+            'success': True,
+            'tasks': [task.to_dict() for task in tasks],
+            'stats': stats,
+            'space': space.to_dict()
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting tasks for space {space_id}: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+# ===================================
+# Phase 2: Subtask Endpoints
+# ===================================
+
+@app.route('/api/tasks/<int:task_id>/subtasks', methods=['GET'])
+def get_subtasks(task_id):
+    """Get all subtasks for a task"""
+    try:
+        task = TaskService.get_task(task_id)
+        if not task:
+            return jsonify({
+                'success': False,
+                'message': 'Task not found'
+            }), 404
+
+        subtasks = TaskService.get_subtasks(task_id)
+
+        return jsonify({
+            'success': True,
+            'subtasks': [s.to_dict() for s in subtasks],
+            'parent_task': task.to_dict()
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting subtasks for task {task_id}: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/tasks/<int:task_id>/subtasks', methods=['POST'])
+def create_subtask(task_id):
+    """Create a subtask under a parent task"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': 'Request body is required'
+            }), 400
+
+        title = data.get('title')
+        if not title:
+            return jsonify({
+                'success': False,
+                'message': 'Title is required'
+            }), 400
+
+        # Parse due date if provided
+        due_date = None
+        if data.get('due_date'):
+            try:
+                due_date = datetime.fromisoformat(data['due_date'].replace('Z', '+00:00'))
+            except ValueError:
+                return jsonify({
+                    'success': False,
+                    'message': 'Invalid due_date format'
+                }), 400
+
+        subtask = TaskService.create_subtask(
+            parent_task_id=task_id,
+            title=title,
+            description=data.get('description'),
+            priority=data.get('priority', 'medium'),
+            due_date=due_date
+        )
+
+        return jsonify({
+            'success': True,
+            'subtask': subtask.to_dict()
+        }), 201
+
+    except ValueError as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 400
+    except Exception as e:
+        logger.error(f"Error creating subtask for task {task_id}: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/tasks/<int:task_id>/subtasks/reorder', methods=['PUT'])
+def reorder_subtasks(task_id):
+    """Reorder subtasks within a parent task"""
+    try:
+        data = request.get_json()
+        if not data or 'subtask_ids' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'subtask_ids array is required'
+            }), 400
+
+        TaskService.reorder_subtasks(task_id, data['subtask_ids'])
+
+        return jsonify({
+            'success': True,
+            'message': 'Subtasks reordered successfully'
+        })
+
+    except Exception as e:
+        logger.error(f"Error reordering subtasks for task {task_id}: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/tasks/<int:task_id>/with-subtasks', methods=['GET'])
+def get_task_with_subtasks(task_id):
+    """Get a task with all its subtasks included"""
+    try:
+        task_data = TaskService.get_task_with_subtasks(task_id)
+        if not task_data:
+            return jsonify({
+                'success': False,
+                'message': 'Task not found'
+            }), 404
+
+        return jsonify({
+            'success': True,
+            'task': task_data
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting task with subtasks {task_id}: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+# ===================================
+# Phase 2: Recurrence Endpoints
+# ===================================
+
+@app.route('/api/tasks/<int:task_id>/recurrence', methods=['PUT'])
+def update_task_recurrence(task_id):
+    """Update recurrence settings for a task"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': 'Request body is required'
+            }), 400
+
+        # Parse end date if provided
+        end_date = None
+        if data.get('recurrence_end_date'):
+            try:
+                end_date = datetime.fromisoformat(data['recurrence_end_date'].replace('Z', '+00:00'))
+            except ValueError:
+                return jsonify({
+                    'success': False,
+                    'message': 'Invalid recurrence_end_date format'
+                }), 400
+
+        task = TaskService.update_recurrence(
+            task_id=task_id,
+            recurrence_type=data.get('recurrence_type'),
+            recurrence_interval=data.get('recurrence_interval'),
+            recurrence_days=data.get('recurrence_days'),
+            recurrence_end_date=end_date
+        )
+
+        if not task:
+            return jsonify({
+                'success': False,
+                'message': 'Task not found'
+            }), 404
+
+        return jsonify({
+            'success': True,
+            'task': task.to_dict()
+        })
+
+    except ValueError as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 400
+    except Exception as e:
+        logger.error(f"Error updating recurrence for task {task_id}: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/tasks/<int:task_id>/complete-recurring', methods=['POST'])
+def complete_recurring_task(task_id):
+    """Complete a recurring task and create next instance"""
+    try:
+        next_task = TaskService.complete_recurring_task(task_id)
+
+        return jsonify({
+            'success': True,
+            'message': 'Task completed',
+            'next_task': next_task.to_dict() if next_task else None
+        })
+
+    except Exception as e:
+        logger.error(f"Error completing recurring task {task_id}: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/tasks/recurring', methods=['GET'])
+def get_recurring_tasks():
+    """Get all recurring tasks"""
+    try:
+        space_id = request.args.get('space_id', type=int)
+
+        tasks = TaskService.get_recurring_tasks(space_id=space_id)
+
+        return jsonify({
+            'success': True,
+            'tasks': [task.to_dict() for task in tasks]
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting recurring tasks: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+# ===================================
 # Error Handlers
 # ===================================
 
@@ -2209,6 +3716,643 @@ def internal_error(error):
         'error': 'INTERNAL_ERROR'
     }), 500
 
+
+# ===================================
+# API Routes - Calendar Events (Phase 4)
+# ===================================
+
+@app.route('/api/calendar/events', methods=['GET'])
+def list_calendar_events():
+    """List calendar events with optional filtering"""
+    try:
+        space_id = request.args.get('space_id', type=int)
+        task_id = request.args.get('task_id', type=int)
+        event_type = request.args.get('event_type', type=str)
+        start_date = request.args.get('start_date', type=str)
+        end_date = request.args.get('end_date', type=str)
+        limit = request.args.get('limit', 100, type=int)
+
+        # Parse dates if provided
+        start_dt = datetime.fromisoformat(start_date) if start_date else None
+        end_dt = datetime.fromisoformat(end_date) if end_date else None
+
+        events = CalendarService.list_events(
+            space_id=space_id,
+            task_id=task_id,
+            event_type=event_type,
+            start_date=start_dt,
+            end_date=end_dt,
+            limit=limit
+        )
+
+        return jsonify({
+            'success': True,
+            'events': [e.to_dict() for e in events]
+        })
+    except Exception as e:
+        logger.error(f"Error listing calendar events: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/calendar/events/range', methods=['GET'])
+def get_calendar_events_range():
+    """Get calendar events for a date range (for calendar view)"""
+    try:
+        start_date = request.args.get('start_date', type=str)
+        end_date = request.args.get('end_date', type=str)
+        space_id = request.args.get('space_id', type=int)
+
+        if not start_date or not end_date:
+            return jsonify({'success': False, 'message': 'start_date and end_date are required'}), 400
+
+        start_dt = datetime.fromisoformat(start_date)
+        end_dt = datetime.fromisoformat(end_date)
+
+        events = CalendarService.get_events_for_range(start_dt, end_dt, space_id)
+
+        return jsonify({
+            'success': True,
+            'events': [e.to_dict() for e in events]
+        })
+    except Exception as e:
+        logger.error(f"Error getting calendar events range: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/calendar/events', methods=['POST'])
+def create_calendar_event():
+    """Create a new calendar event"""
+    try:
+        data = request.get_json()
+
+        if not data.get('title') or not data.get('start_time') or not data.get('end_time'):
+            return jsonify({'success': False, 'message': 'title, start_time, and end_time are required'}), 400
+
+        start_time = datetime.fromisoformat(data['start_time'])
+        end_time = datetime.fromisoformat(data['end_time'])
+        recurrence_end = datetime.fromisoformat(data['recurrence_end']) if data.get('recurrence_end') else None
+
+        event = CalendarService.create_event(
+            title=data['title'],
+            start_time=start_time,
+            end_time=end_time,
+            space_id=data.get('space_id'),
+            task_id=data.get('task_id'),
+            description=data.get('description'),
+            location=data.get('location'),
+            all_day=data.get('all_day', False),
+            timezone=data.get('timezone', 'UTC'),
+            event_type=data.get('event_type', 'event'),
+            color=data.get('color'),
+            reminder_minutes=data.get('reminder_minutes'),
+            attendees=data.get('attendees'),
+            is_recurring=data.get('is_recurring', False),
+            recurrence_rule=data.get('recurrence_rule'),
+            recurrence_end=recurrence_end
+        )
+
+        return jsonify({
+            'success': True,
+            'event': event.to_dict()
+        }), 201
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error creating calendar event: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/calendar/events/<int:event_id>', methods=['GET'])
+def get_calendar_event(event_id):
+    """Get a specific calendar event"""
+    try:
+        event = CalendarService.get_event(event_id)
+        if not event:
+            return jsonify({'success': False, 'message': 'Event not found'}), 404
+
+        return jsonify({
+            'success': True,
+            'event': event.to_dict()
+        })
+    except Exception as e:
+        logger.error(f"Error getting calendar event: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/calendar/events/<int:event_id>', methods=['PUT'])
+def update_calendar_event(event_id):
+    """Update a calendar event"""
+    try:
+        data = request.get_json()
+
+        # Convert datetime strings if present
+        if 'start_time' in data:
+            data['start_time'] = datetime.fromisoformat(data['start_time'])
+        if 'end_time' in data:
+            data['end_time'] = datetime.fromisoformat(data['end_time'])
+        if 'recurrence_end' in data and data['recurrence_end']:
+            data['recurrence_end'] = datetime.fromisoformat(data['recurrence_end'])
+
+        event = CalendarService.update_event(event_id, data)
+        if not event:
+            return jsonify({'success': False, 'message': 'Event not found'}), 404
+
+        return jsonify({
+            'success': True,
+            'event': event.to_dict()
+        })
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error updating calendar event: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/calendar/events/<int:event_id>', methods=['DELETE'])
+def delete_calendar_event(event_id):
+    """Delete a calendar event"""
+    try:
+        success = CalendarService.delete_event(event_id)
+        if not success:
+            return jsonify({'success': False, 'message': 'Event not found'}), 404
+
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Error deleting calendar event: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/calendar/events/from-task/<int:task_id>', methods=['POST'])
+def create_event_from_task(task_id):
+    """Create a calendar event from a task's due date"""
+    try:
+        data = request.get_json() or {}
+        duration = data.get('duration_minutes', 60)
+
+        event = CalendarService.create_event_from_task(task_id, duration)
+
+        return jsonify({
+            'success': True,
+            'event': event.to_dict()
+        }), 201
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error creating event from task: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/calendar/stats', methods=['GET'])
+def get_calendar_stats():
+    """Get calendar statistics"""
+    try:
+        space_id = request.args.get('space_id', type=int)
+        stats = CalendarService.get_calendar_stats(space_id=space_id)
+        return jsonify({'success': True, 'stats': stats})
+    except Exception as e:
+        logger.error(f"Error getting calendar stats: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+# ===================================
+# API Routes - Notifications (Phase 5)
+# ===================================
+
+@app.route('/api/notifications', methods=['GET'])
+def list_notifications():
+    """List notifications with optional filtering"""
+    try:
+        user_id = request.args.get('user_id', type=int)
+        space_id = request.args.get('space_id', type=int)
+        notification_type = request.args.get('type', type=str)
+        unread_only = request.args.get('unread_only', 'false').lower() == 'true'
+        limit = request.args.get('limit', 50, type=int)
+
+        notifications = NotificationService.list_notifications(
+            user_id=user_id,
+            space_id=space_id,
+            notification_type=notification_type,
+            unread_only=unread_only,
+            limit=limit
+        )
+
+        return jsonify({
+            'success': True,
+            'notifications': [n.to_dict() for n in notifications]
+        })
+    except Exception as e:
+        logger.error(f"Error listing notifications: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/notifications', methods=['POST'])
+def create_notification():
+    """Create a new notification"""
+    try:
+        data = request.get_json()
+
+        if not data.get('title') or not data.get('type'):
+            return jsonify({'success': False, 'message': 'title and type are required'}), 400
+
+        scheduled_for = None
+        if data.get('scheduled_for'):
+            scheduled_for = datetime.fromisoformat(data['scheduled_for'])
+
+        notification = NotificationService.create_notification(
+            title=data['title'],
+            notification_type=data['type'],
+            message=data.get('message'),
+            user_id=data.get('user_id'),
+            task_id=data.get('task_id'),
+            space_id=data.get('space_id'),
+            priority=data.get('priority', 'normal'),
+            action_url=data.get('action_url'),
+            action_data=data.get('action_data'),
+            scheduled_for=scheduled_for
+        )
+
+        return jsonify({
+            'success': True,
+            'notification': notification.to_dict()
+        }), 201
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error creating notification: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/notifications/<int:notification_id>', methods=['GET'])
+def get_notification(notification_id):
+    """Get a specific notification"""
+    try:
+        notification = NotificationService.get_notification(notification_id)
+        if not notification:
+            return jsonify({'success': False, 'message': 'Notification not found'}), 404
+
+        return jsonify({
+            'success': True,
+            'notification': notification.to_dict()
+        })
+    except Exception as e:
+        logger.error(f"Error getting notification: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/notifications/<int:notification_id>/read', methods=['POST'])
+def mark_notification_read(notification_id):
+    """Mark a notification as read"""
+    try:
+        notification = NotificationService.mark_as_read(notification_id)
+        if not notification:
+            return jsonify({'success': False, 'message': 'Notification not found'}), 404
+
+        return jsonify({
+            'success': True,
+            'notification': notification.to_dict()
+        })
+    except Exception as e:
+        logger.error(f"Error marking notification read: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/notifications/read-all', methods=['POST'])
+def mark_all_notifications_read():
+    """Mark all notifications as read"""
+    try:
+        data = request.get_json() or {}
+        user_id = data.get('user_id')
+
+        count = NotificationService.mark_all_as_read(user_id)
+
+        return jsonify({
+            'success': True,
+            'count': count
+        })
+    except Exception as e:
+        logger.error(f"Error marking all notifications read: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/notifications/<int:notification_id>/dismiss', methods=['POST'])
+def dismiss_notification(notification_id):
+    """Dismiss a notification"""
+    try:
+        notification = NotificationService.dismiss(notification_id)
+        if not notification:
+            return jsonify({'success': False, 'message': 'Notification not found'}), 404
+
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Error dismissing notification: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/notifications/dismiss-all', methods=['POST'])
+def dismiss_all_notifications():
+    """Dismiss all notifications"""
+    try:
+        data = request.get_json() or {}
+        user_id = data.get('user_id')
+
+        count = NotificationService.dismiss_all(user_id)
+
+        return jsonify({
+            'success': True,
+            'count': count
+        })
+    except Exception as e:
+        logger.error(f"Error dismissing all notifications: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/notifications/<int:notification_id>', methods=['DELETE'])
+def delete_notification(notification_id):
+    """Delete a notification"""
+    try:
+        success = NotificationService.delete_notification(notification_id)
+        if not success:
+            return jsonify({'success': False, 'message': 'Notification not found'}), 404
+
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Error deleting notification: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/notifications/unread-count', methods=['GET'])
+def get_unread_notification_count():
+    """Get count of unread notifications"""
+    try:
+        user_id = request.args.get('user_id', type=int)
+        count = NotificationService.get_unread_count(user_id)
+        return jsonify({'success': True, 'count': count})
+    except Exception as e:
+        logger.error(f"Error getting unread count: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/notifications/stats', methods=['GET'])
+def get_notification_stats():
+    """Get notification statistics"""
+    try:
+        user_id = request.args.get('user_id', type=int)
+        stats = NotificationService.get_notification_stats(user_id)
+        return jsonify({'success': True, 'stats': stats})
+    except Exception as e:
+        logger.error(f"Error getting notification stats: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+# ===================================
+# API Routes - Task Templates (Phase 6)
+# ===================================
+
+@app.route('/api/templates', methods=['GET'])
+def list_task_templates():
+    """List task templates with optional filtering"""
+    try:
+        space_id = request.args.get('space_id', type=int)
+        category = request.args.get('category', type=str)
+        include_global = request.args.get('include_global', 'true').lower() == 'true'
+        limit = request.args.get('limit', 100, type=int)
+
+        templates = TaskTemplateService.list_templates(
+            space_id=space_id,
+            category=category,
+            include_global=include_global,
+            limit=limit
+        )
+
+        return jsonify({
+            'success': True,
+            'templates': [t.to_dict() for t in templates]
+        })
+    except Exception as e:
+        logger.error(f"Error listing templates: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/templates', methods=['POST'])
+def create_task_template():
+    """Create a new task template"""
+    try:
+        data = request.get_json()
+
+        if not data.get('name') or not data.get('title_template'):
+            return jsonify({'success': False, 'message': 'name and title_template are required'}), 400
+
+        template = TaskTemplateService.create_template(
+            name=data['name'],
+            title_template=data['title_template'],
+            description=data.get('description'),
+            description_template=data.get('description_template'),
+            default_priority=data.get('default_priority', 'medium'),
+            default_due_offset_days=data.get('default_due_offset_days'),
+            default_recurrence_type=data.get('default_recurrence_type'),
+            default_recurrence_interval=data.get('default_recurrence_interval', 1),
+            default_recurrence_days=data.get('default_recurrence_days'),
+            subtask_templates=data.get('subtask_templates'),
+            category=data.get('category'),
+            tags=data.get('tags'),
+            icon=data.get('icon'),
+            color=data.get('color'),
+            space_id=data.get('space_id'),
+            is_global=data.get('is_global', False)
+        )
+
+        return jsonify({
+            'success': True,
+            'template': template.to_dict()
+        }), 201
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error creating template: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/templates/<int:template_id>', methods=['GET'])
+def get_task_template(template_id):
+    """Get a specific task template"""
+    try:
+        template = TaskTemplateService.get_template(template_id)
+        if not template:
+            return jsonify({'success': False, 'message': 'Template not found'}), 404
+
+        return jsonify({
+            'success': True,
+            'template': template.to_dict()
+        })
+    except Exception as e:
+        logger.error(f"Error getting template: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/templates/<int:template_id>', methods=['PUT'])
+def update_task_template(template_id):
+    """Update a task template"""
+    try:
+        data = request.get_json()
+
+        template = TaskTemplateService.update_template(template_id, data)
+        if not template:
+            return jsonify({'success': False, 'message': 'Template not found'}), 404
+
+        return jsonify({
+            'success': True,
+            'template': template.to_dict()
+        })
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error updating template: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/templates/<int:template_id>', methods=['DELETE'])
+def delete_task_template(template_id):
+    """Delete a task template"""
+    try:
+        success = TaskTemplateService.delete_template(template_id)
+        if not success:
+            return jsonify({'success': False, 'message': 'Template not found'}), 404
+
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Error deleting template: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/templates/<int:template_id>/apply', methods=['POST'])
+def apply_task_template(template_id):
+    """Create a task from a template"""
+    try:
+        data = request.get_json()
+
+        if not data.get('space_id'):
+            return jsonify({'success': False, 'message': 'space_id is required'}), 400
+
+        due_date = None
+        if data.get('due_date'):
+            due_date = datetime.fromisoformat(data['due_date'])
+
+        task = TaskTemplateService.apply_template(
+            template_id=template_id,
+            space_id=data['space_id'],
+            title_vars=data.get('title_vars'),
+            description_vars=data.get('description_vars'),
+            due_date=due_date,
+            create_subtasks=data.get('create_subtasks', True)
+        )
+
+        return jsonify({
+            'success': True,
+            'task': task.to_dict(include_subtasks=True)
+        }), 201
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error applying template: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/templates/<int:template_id>/duplicate', methods=['POST'])
+def duplicate_task_template(template_id):
+    """Create a copy of an existing template"""
+    try:
+        data = request.get_json() or {}
+        new_name = data.get('name')
+
+        template = TaskTemplateService.duplicate_template(template_id, new_name)
+
+        return jsonify({
+            'success': True,
+            'template': template.to_dict()
+        }), 201
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error duplicating template: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/templates/categories', methods=['GET'])
+def get_template_categories():
+    """Get all template categories"""
+    try:
+        categories = TaskTemplateService.get_template_categories()
+        return jsonify({'success': True, 'categories': categories})
+    except Exception as e:
+        logger.error(f"Error getting template categories: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/templates/popular', methods=['GET'])
+def get_popular_templates():
+    """Get most frequently used templates"""
+    try:
+        limit = request.args.get('limit', 10, type=int)
+        templates = TaskTemplateService.get_popular_templates(limit)
+        return jsonify({
+            'success': True,
+            'templates': [t.to_dict() for t in templates]
+        })
+    except Exception as e:
+        logger.error(f"Error getting popular templates: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/templates/recent', methods=['GET'])
+def get_recent_templates():
+    """Get recently used templates"""
+    try:
+        limit = request.args.get('limit', 10, type=int)
+        templates = TaskTemplateService.get_recent_templates(limit)
+        return jsonify({
+            'success': True,
+            'templates': [t.to_dict() for t in templates]
+        })
+    except Exception as e:
+        logger.error(f"Error getting recent templates: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/templates/search', methods=['GET'])
+def search_templates():
+    """Search templates by name, description, or tags"""
+    try:
+        query = request.args.get('q', '')
+        space_id = request.args.get('space_id', type=int)
+
+        if not query:
+            return jsonify({'success': False, 'message': 'Search query is required'}), 400
+
+        templates = TaskTemplateService.search_templates(query, space_id)
+        return jsonify({
+            'success': True,
+            'templates': [t.to_dict() for t in templates]
+        })
+    except Exception as e:
+        logger.error(f"Error searching templates: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/templates/seed', methods=['POST'])
+def seed_default_templates():
+    """Seed default task templates"""
+    try:
+        templates = TaskTemplateService.seed_default_templates()
+        return jsonify({
+            'success': True,
+            'message': f'Created {len(templates)} default templates',
+            'templates': [t.to_dict() for t in templates]
+        })
+    except Exception as e:
+        logger.error(f"Error seeding templates: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @app.errorhandler(Exception)
 def handle_exception(error):
     """Handle uncaught exceptions"""
@@ -2226,48 +4370,6 @@ def handle_exception(error):
         return render_template('error.html', error=str(error)), 500
 
 # ===================================
-# Helper Functions
-# ===================================
-
-def create_default_personal_space():
-    """Create default Personal space with all personal tier agents"""
-    try:
-        # Check if Personal space already exists
-        personal_space = Space.query.filter_by(name='Personal').first()
-
-        if personal_space:
-            print("[INFO] Personal space already exists")
-            return personal_space
-
-        # Get all personal tier agents
-        personal_agents = Agent.query.filter_by(type='personal').all()
-
-        if not personal_agents:
-            print("[WARNING] No personal agents found")
-            return None
-
-        # Create Personal space
-        personal_space = Space(
-            name='Personal',
-            description='Your personal workspace with Coach and HealthFit agents'
-        )
-
-        # Add all personal agents
-        agent_ids = [agent.id for agent in personal_agents]
-        personal_space.set_agents(agent_ids)
-
-        db.session.add(personal_space)
-        db.session.commit()
-
-        print(f"[SUCCESS] Created Personal space with {len(personal_agents)} agents: {', '.join([a.name for a in personal_agents])}")
-        return personal_space
-
-    except Exception as e:
-        db.session.rollback()
-        print(f"[ERROR] Failed to create Personal space: {e}")
-        return None
-
-# ===================================
 # Application Entry Point
 # ===================================
 
@@ -2282,8 +4384,12 @@ if __name__ == '__main__':
             from models import seed_agents
             seed_agents()
 
-        # Create default Personal space
+        # Create default Personal space and sync Personal agents
         create_default_personal_space()
+        sync_personal_agents_to_spaces()
+
+        # Seed default integrations
+        seed_integrations()
 
         print("\n" + "=" * 70)
         print("CLEO - AI AGENT WORKSPACE")

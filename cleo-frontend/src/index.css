@@ -1,0 +1,164 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Background colors (light theme) */
+    --background: 0 0% 100%;
+    --background-secondary: 0 0% 97%;
+    --background-tertiary: 0 0% 94%;
+    --background-hover: 0 0% 91%;
+    --background-active: 0 0% 88%;
+
+    /* Foreground/text colors */
+    --foreground: 0 0% 10%;
+    --foreground-secondary: 0 0% 40%;
+    --foreground-tertiary: 0 0% 60%;
+
+    /* Border colors */
+    --border: 0 0% 88%;
+    --border-light: 0 0% 94%;
+
+    /* Primary/Accent - Cleo blue (default Urban Chic theme) */
+    --primary: 239 84% 67%;
+    --primary-hover: 239 84% 60%;
+    --primary-light: 239 100% 95%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Theme colors (customizable) */
+    --theme-bg-light: #e8e8e8;
+    --theme-bg-medium: #6366f1;
+    --theme-accent: #64748b;
+    --theme-bg-dark: #475569;
+
+    /* Status colors */
+    --success: 162 63% 35%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 10%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* shadcn/ui required variables */
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 10%;
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 0% 45%;
+    --accent: 239 84% 67%;
+    --accent-foreground: 0 0% 100%;
+    --ring: 239 84% 67%;
+    --input: 0 0% 88%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    /* Background colors (dark theme) */
+    --background: 0 0% 9%;
+    --background-secondary: 0 0% 12%;
+    --background-tertiary: 0 0% 15%;
+    --background-hover: 0 0% 18%;
+    --background-active: 0 0% 21%;
+
+    /* Foreground/text colors */
+    --foreground: 0 0% 95%;
+    --foreground-secondary: 0 0% 70%;
+    --foreground-tertiary: 0 0% 50%;
+
+    /* Border colors */
+    --border: 0 0% 20%;
+    --border-light: 0 0% 15%;
+
+    /* Primary/Accent - Urban Chic theme for dark mode */
+    --primary: 239 84% 67%;
+    --primary-hover: 239 84% 72%;
+    --primary-light: 239 50% 20%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Theme colors (customizable) */
+    --theme-bg-light: #374151;
+    --theme-bg-medium: #6366f1;
+    --theme-accent: #94a3b8;
+    --theme-bg-dark: #1e293b;
+
+    /* Status colors */
+    --success: 162 63% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 0 0% 10%;
+    --destructive: 0 84% 65%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* shadcn/ui required variables */
+    --card: 0 0% 12%;
+    --card-foreground: 0 0% 95%;
+    --popover: 0 0% 12%;
+    --popover-foreground: 0 0% 95%;
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 60%;
+    --accent: 239 84% 67%;
+    --accent-foreground: 0 0% 100%;
+    --ring: 239 84% 67%;
+    --input: 0 0% 20%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}
+
+/* Custom utility classes */
+@layer utilities {
+  /* Agent tier gradient backgrounds */
+  .bg-tier-master {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  }
+
+  .bg-tier-personal {
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  }
+
+  .bg-tier-team {
+    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+  }
+
+  .bg-tier-worker {
+    background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+  }
+
+  .bg-tier-expert {
+    background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+  }
+
+  /* Scrollbar styling */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border-radius: 3px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--foreground-tertiary));
+  }
+}
