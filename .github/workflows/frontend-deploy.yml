@@ -48,7 +48,8 @@ jobs:
 
       - name: Type check
         working-directory: ${{ env.WORKING_DIRECTORY }}
-        run: npm run typecheck || echo "No typecheck script, skipping..."
+        run: npm run typecheck
+        continue-on-error: false
 
       - name: Lint
         working-directory: ${{ env.WORKING_DIRECTORY }}
