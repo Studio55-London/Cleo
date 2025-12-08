@@ -5,6 +5,9 @@ const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
   : '/api'
 
+// Determine if we're making cross-origin requests (no credentials needed for cross-origin)
+const IS_CROSS_ORIGIN = !!import.meta.env.VITE_API_URL
+
 class ApiClient {
   private baseUrl: string
 
@@ -24,7 +27,9 @@ class ApiClient {
         'Content-Type': 'application/json',
         ...options.headers,
       },
-      credentials: 'include', // Include cookies for session auth
+      // Only include credentials for same-origin requests (local dev)
+      // Cross-origin requests in production don't need cookies
+      ...(IS_CROSS_ORIGIN ? {} : { credentials: 'include' as RequestCredentials }),
     }
 
     const response = await fetch(url, config)
@@ -93,7 +98,8 @@ class ApiClient {
     const response = await fetch(url, {
       method: 'POST',
       body: formData,
-      credentials: 'include',
+      // Only include credentials for same-origin requests
+      ...(IS_CROSS_ORIGIN ? {} : { credentials: 'include' as RequestCredentials }),
     })
 
     if (!response.ok) {
