@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from sqlalchemy import engine_from_config, create_engine
+from sqlalchemy import engine_from_config, create_engine, text
 from sqlalchemy import pool
 
 from alembic import context
@@ -134,7 +134,7 @@ def run_migrations_online() -> None:
         with context.begin_transaction():
             # For PostgreSQL, ensure pgvector extension is available
             if is_postgresql:
-                connection.execute('CREATE EXTENSION IF NOT EXISTS vector')
+                connection.execute(text('CREATE EXTENSION IF NOT EXISTS vector'))
             context.run_migrations()
 
 
