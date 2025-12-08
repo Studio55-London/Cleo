@@ -64,3 +64,7 @@ htmlcov/
 .Python
 # API Keys - DO NOT COMMIT
 Context/Claude API.txt
+
+# Azure credentials (DO NOT COMMIT)
+azure-credentials*.txt
+nul
