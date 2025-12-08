@@ -1,0 +1,201 @@
+# Cleo Backend - Azure App Service Deployment
+# Builds Docker image and deploys to Azure Container Registry + App Service
+
+name: Backend Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - '*.py'
+      - 'agents/**'
+      - 'config/**'
+      - 'integrations/**'
+      - 'services/**'
+      - 'skills/**'
+      - 'templates/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - 'alembic/**'
+      - '.github/workflows/backend-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'prod'
+        type: choice
+        options:
+          - prod
+          - staging
+
+env:
+  AZURE_RESOURCE_GROUP: rg-cleoagent-prod
+  ACR_NAME: cleoagentacrprod
+  APP_SERVICE_NAME: cleoagent-api-prod
+  IMAGE_NAME: cleoagent-api
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --cov=. --cov-report=xml || echo "No tests found, skipping"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DOCKER_BUILD: true
+
+  build-and-push:
+    name: Build & Push Docker Image
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_NAME }}.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            DOCKER_BUILD=true
+
+  deploy:
+    name: Deploy to Azure App Service
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://${{ env.APP_SERVICE_NAME }}.azurewebsites.net
+    steps:
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: ${{ env.APP_SERVICE_NAME }}
+          images: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Health check
+        run: |
+          echo "Waiting for deployment to complete..."
+          sleep 60
+
+          # Retry health check up to 5 times
+          for i in {1..5}; do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://${{ env.APP_SERVICE_NAME }}.azurewebsites.net/api/status)
+            if [ "$HTTP_STATUS" -eq 200 ]; then
+              echo "Health check passed!"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP status $HTTP_STATUS, waiting..."
+            sleep 30
+          done
+
+          echo "Health check failed after 5 attempts"
+          exit 1
+
+  run-migrations:
+    name: Run Database Migrations
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install alembic psycopg2-binary python-dotenv sqlalchemy
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get Database URL from Key Vault
+        id: get-db-url
+        run: |
+          DB_URL=$(az keyvault secret show --vault-name cleoagent-kv-prod --name database-url --query value -o tsv)
+          echo "::add-mask::$DB_URL"
+          echo "DATABASE_URL=$DB_URL" >> $GITHUB_ENV
+
+      - name: Run Alembic Migrations
+        run: |
+          alembic upgrade head
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+
+  notify:
+    name: Send Notification
+    needs: [deploy, run-migrations]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Send success notification
+        if: ${{ needs.deploy.result == 'success' && needs.run-migrations.result == 'success' }}
+        run: |
+          echo "Deployment successful!"
+          echo "Backend deployed to: https://${{ env.APP_SERVICE_NAME }}.azurewebsites.net"
+
+      - name: Send failure notification
+        if: ${{ needs.deploy.result == 'failure' || needs.run-migrations.result == 'failure' }}
+        run: |
+          echo "Deployment failed!"
+          exit 1

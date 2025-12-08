@@ -1,52 +1,80 @@
 # Cleo - AI Agent Orchestration System
-# Microsoft Agent Framework + Claude + Microsoft Graph
+# Azure Deployment Ready - PostgreSQL + pgvector
 
-# Agent Framework (in preview - using custom implementation for now)
-# agent-framework>=0.1.0
-
-# Claude API
+# =====================
+# Core AI & LLM
+# =====================
 anthropic>=0.40.0
 
-# Microsoft Graph API
-# Note: msgraph-sdk requires Windows Long Path support to be enabled
-# Run as admin: New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
-# msgraph-sdk>=1.0.0
-azure-identity>=1.15.0
-msal>=1.25.0
-O365>=2.0.30
-
+# =====================
 # Web Framework
+# =====================
 Flask>=3.0.0
 Flask-SQLAlchemy>=3.1.1
 Flask-CORS>=4.0.0
 Flask-Login>=0.6.3
 
+# Production WSGI Server
+gunicorn>=21.2.0
+
+# =====================
+# Database
+# =====================
+SQLAlchemy>=2.0.23
+alembic>=1.13.0
+
+# PostgreSQL Support
+psycopg2-binary>=2.9.9
+
+# Vector Store (pgvector)
+pgvector>=0.2.4
+
+# =====================
+# Azure SDK
+# =====================
+azure-identity>=1.15.0
+azure-keyvault-secrets>=4.8.0
+azure-storage-blob>=12.19.0
+
+# Microsoft Graph API
+msal>=1.25.0
+O365>=2.0.30
+
+# =====================
 # Task Scheduling
+# =====================
 APScheduler>=3.10.4
 
+# =====================
 # Integrations
+# =====================
 python-telegram-bot>=20.0
 httpx>=0.24.0
 todoist-api-python>=3.1.0
 
+# =====================
 # Utilities
+# =====================
 python-dotenv>=1.0.0
 pyyaml>=6.0
 requests>=2.31.0
 
-# Database
-SQLAlchemy>=2.0.23
-alembic>=1.13.0
-
-# Development
-pytest>=7.4.0
-black>=23.0.0
-
+# =====================
 # Knowledge Base / GraphRAG
+# =====================
 PyPDF2>=3.0.0
 python-docx>=1.1.0
-chromadb>=0.4.0
 numpy>=1.24.0
 sentence-transformers>=2.2.0
 networkx>=3.0
 tiktoken>=0.5.0
+
+# ChromaDB - Optional for local development (pgvector used in production)
+chromadb>=0.4.0
+
+# =====================
+# Development & Testing
+# =====================
+pytest>=7.4.0
+pytest-cov>=4.1.0
+black>=23.0.0

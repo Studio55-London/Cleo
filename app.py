@@ -1,6 +1,10 @@
 """
 Cleo - AI Agent Workspace Application
 Flask Backend with Spaces API
+
+Supports deployment to:
+- Local development (SQLite + ChromaDB)
+- Azure production (PostgreSQL + pgvector + Azure Blob Storage)
 """
 import os
 import logging
@@ -15,41 +19,78 @@ from services.notification_service import NotificationService
 from services.template_service import TaskTemplateService
 from agents import get_agent, list_agent_names, agent_count
 from knowledge_processor import get_processor
-from vector_store import get_vector_store
 from integrations.todoist_helper import get_todoist_context
 from skills.skill_manager import init_skill_manager, get_skill_manager
 from skills.skill_parser import SkillParser, SkillParserError
 from werkzeug.utils import secure_filename
 import json
 
+# Import configuration
+from config.settings import (
+    DATABASE_URI, SECRET_KEY, DEBUG, IS_AZURE, IS_PRODUCTION,
+    USE_PGVECTOR, BLOB_STORAGE_ENABLED, LOG_LEVEL, LOCAL_DOCUMENT_PATH
+)
+
 # Configure logging
+log_handlers = [logging.StreamHandler()]
+if not IS_PRODUCTION:
+    # Only write to file in development
+    os.makedirs('data', exist_ok=True)
+    log_handlers.append(logging.FileHandler('data/cleo.log'))
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('data/cleo.log'),
-        logging.StreamHandler()
-    ]
+    handlers=log_handlers
 )
 logger = logging.getLogger(__name__)
 
+# Log startup environment
+logger.info(f"Starting Cleo - Environment: {'Azure Production' if IS_AZURE else 'Local Development'}")
+logger.info(f"Database: {'PostgreSQL' if 'postgresql' in DATABASE_URI else 'SQLite'}")
+logger.info(f"Vector Store: {'pgvector' if USE_PGVECTOR else 'ChromaDB'}")
+logger.info(f"Blob Storage: {'Azure Blob' if BLOB_STORAGE_ENABLED else 'Local'}")
+
 # Initialize Flask app
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///agents.db'
+app.config['SECRET_KEY'] = SECRET_KEY
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URI
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# PostgreSQL connection pool settings for production
+if 'postgresql' in DATABASE_URI:
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_size': 5,
+        'pool_recycle': 300,
+        'pool_pre_ping': True,
+        'connect_args': {
+            'connect_timeout': 30,
+            'options': '-c statement_timeout=60000'  # 60 second statement timeout
+        }
+    }
+
 # File upload configuration
-app.config['UPLOAD_FOLDER'] = 'data/knowledge/documents'
+app.config['UPLOAD_FOLDER'] = str(LOCAL_DOCUMENT_PATH) if not BLOB_STORAGE_ENABLED else 'data/knowledge/documents'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
 ALLOWED_EXTENSIONS = {'pdf', 'docx', 'doc', 'txt', 'md'}
 
-# Ensure upload directory exists
+# Ensure upload directory exists (for local storage)
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Initialize extensions
 db.init_app(app)
 CORS(app)
+
+# Import vector store based on configuration
+if USE_PGVECTOR:
+    from vector_store_pgvector import get_vector_store
+    logger.info("Using pgvector for vector search")
+else:
+    from vector_store import get_vector_store
+    logger.info("Using ChromaDB for vector search")
+
+# Import blob storage service
+from services.blob_storage_service import get_blob_storage_service
 
 # Initialize Flask-Login
 login_manager = LoginManager()
@@ -1595,17 +1636,33 @@ def delete_user(user_id):
 
 @app.route('/api/status', methods=['GET'])
 def get_status():
-    """Get system status"""
+    """Get system status - also used as health check endpoint"""
     try:
+        # Test database connectivity
+        db_status = 'connected'
+        try:
+            db.session.execute(db.text('SELECT 1'))
+        except Exception as db_err:
+            db_status = f'error: {str(db_err)[:50]}'
+
         return jsonify({
             'success': True,
             'status': 'online',
             'agents_count': agent_count(),
             'spaces_count': Space.query.count(),
-            'version': '2.0'
+            'version': '2.0',
+            'environment': {
+                'is_azure': IS_AZURE,
+                'is_production': IS_PRODUCTION,
+                'database': 'postgresql' if 'postgresql' in DATABASE_URI else 'sqlite',
+                'database_status': db_status,
+                'vector_store': 'pgvector' if USE_PGVECTOR else 'chromadb',
+                'blob_storage': 'azure_blob' if BLOB_STORAGE_ENABLED else 'local'
+            }
         })
 
     except Exception as e:
+        logger.error(f"Status check failed: {e}")
         return jsonify({
             'success': False,
             'message': str(e)

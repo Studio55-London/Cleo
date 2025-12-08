@@ -1,6 +1,7 @@
 """
 Cleo Database Models
-SQLite database schema for agents, jobs, activities, spaces, messages, and users
+Database schema for agents, jobs, activities, spaces, messages, and users
+Supports both SQLite (local development) and PostgreSQL with pgvector (production)
 """
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
@@ -8,8 +9,22 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 from pathlib import Path
 import json
+import os
 
 db = SQLAlchemy()
+
+# Check if we're using PostgreSQL with pgvector
+USE_PGVECTOR = os.getenv("USE_PGVECTOR", "false").lower() == "true"
+
+# Conditionally import pgvector Vector type
+try:
+    if USE_PGVECTOR:
+        from pgvector.sqlalchemy import Vector
+        VECTOR_TYPE = Vector(384)  # Dimension for all-MiniLM-L6-v2 embeddings
+    else:
+        VECTOR_TYPE = None
+except ImportError:
+    VECTOR_TYPE = None
 
 
 class User(UserMixin, db.Model):
@@ -305,6 +320,8 @@ class Document(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), nullable=False)
+    filename = db.Column(db.String(255))  # Original filename
+    title = db.Column(db.String(500))  # Document title (extracted or provided)
     file_path = db.Column(db.String(500), nullable=False)
     file_type = db.Column(db.String(50))  # pdf, docx, txt, md
     file_size = db.Column(db.Integer)  # in bytes
@@ -316,6 +333,12 @@ class Document(db.Model):
     uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
     processed_at = db.Column(db.DateTime)
 
+    # Azure Blob Storage fields
+    storage_type = db.Column(db.String(20), default='local')  # local, azure_blob
+    blob_name = db.Column(db.String(500))  # Azure Blob Storage name
+    blob_url = db.Column(db.String(1000))  # Azure Blob URL (without SAS token)
+    blob_container = db.Column(db.String(100))  # Container name
+
     # Relationships
     chunks = db.relationship('DocumentChunk', backref='document', lazy=True, cascade='all, delete-orphan')
 
@@ -323,25 +346,30 @@ class Document(db.Model):
         return {
             'id': self.id,
             'name': self.name,
+            'filename': self.filename,
+            'title': self.title,
             'file_type': self.file_type,
             'size': self.format_file_size(),
             'status': self.status,
             'chunks': self.chunk_count,
             'entities': self.entity_count,
-            'uploaded_at': self.uploaded_at.isoformat(),
-            'processed_at': self.processed_at.isoformat() if self.processed_at else None
+            'uploaded_at': self.uploaded_at.isoformat() if self.uploaded_at else None,
+            'processed_at': self.processed_at.isoformat() if self.processed_at else None,
+            'storage_type': self.storage_type,
+            'blob_name': self.blob_name
         }
 
     def format_file_size(self):
         """Format file size in human-readable format"""
-        if not self.file_size:
+        size = self.file_size
+        if not size:
             return "Unknown"
 
         for unit in ['B', 'KB', 'MB', 'GB']:
-            if self.file_size < 1024.0:
-                return f"{self.file_size:.1f} {unit}"
-            self.file_size /= 1024.0
-        return f"{self.file_size:.1f} TB"
+            if size < 1024.0:
+                return f"{size:.1f} {unit}"
+            size /= 1024.0
+        return f"{size:.1f} TB"
 
     def __repr__(self):
         return f'<Document {self.name}>'
@@ -356,28 +384,42 @@ class DocumentChunk(db.Model):
     chunk_index = db.Column(db.Integer, nullable=False)  # Order in document
     content = db.Column(db.Text, nullable=False)  # The actual text chunk
     token_count = db.Column(db.Integer)
-    embedding = db.Column(db.Text)  # JSON-serialized vector embedding
+    embedding = db.Column(db.Text)  # JSON-serialized vector embedding (SQLite fallback)
     chunk_metadata = db.Column(db.Text)  # JSON metadata (page number, section, etc.)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    # pgvector embedding column for PostgreSQL production
+    # This column is added via Alembic migration when USE_PGVECTOR=true
+    # embedding_vector = db.Column(Vector(384))  # Added dynamically
+
+    # Additional fields for Azure Blob Storage
+    blob_name = db.Column(db.String(500))  # Azure Blob Storage reference
+    filename = db.Column(db.String(255))  # Original filename for this chunk's document
+
     def set_embedding(self, vector):
-        """Store embedding as JSON"""
-        import json
-        self.embedding = json.dumps(vector)
+        """Store embedding as JSON (SQLite) or update pgvector column (PostgreSQL)"""
+        if USE_PGVECTOR and hasattr(self, 'embedding_vector'):
+            # For pgvector, the embedding is stored directly
+            self.embedding_vector = vector
+        else:
+            # For SQLite, store as JSON string
+            self.embedding = json.dumps(vector)
 
     def get_embedding(self):
         """Retrieve embedding as list"""
-        import json
+        if USE_PGVECTOR and hasattr(self, 'embedding_vector') and self.embedding_vector is not None:
+            # pgvector returns numpy array or list
+            emb = self.embedding_vector
+            return list(emb) if hasattr(emb, '__iter__') else None
+        # Fall back to JSON column
         return json.loads(self.embedding) if self.embedding else None
 
     def set_metadata(self, data):
         """Store metadata as JSON"""
-        import json
         self.chunk_metadata = json.dumps(data)
 
     def get_metadata(self):
         """Retrieve metadata as dict"""
-        import json
         return json.loads(self.chunk_metadata) if self.chunk_metadata else {}
 
     def to_dict(self):
@@ -387,7 +429,8 @@ class DocumentChunk(db.Model):
             'chunk_index': self.chunk_index,
             'content': self.content[:200] + '...' if len(self.content) > 200 else self.content,
             'token_count': self.token_count,
-            'metadata': self.get_metadata()
+            'metadata': self.get_metadata(),
+            'has_embedding': self.get_embedding() is not None
         }
 
     def __repr__(self):

@@ -1,14 +1,23 @@
+"""
+Alembic environment configuration for Cleo
+Supports both SQLite (local development) and PostgreSQL (Azure production)
+"""
 from logging.config import fileConfig
+import os
 import sys
 from pathlib import Path
 
-from sqlalchemy import engine_from_config
+from sqlalchemy import engine_from_config, create_engine
 from sqlalchemy import pool
 
 from alembic import context
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
 
 # Import our models
 from models import db
@@ -27,10 +36,27 @@ if config.config_file_name is not None:
 # Import our Flask-SQLAlchemy metadata
 target_metadata = db.Model.metadata
 
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
+
+def get_database_url():
+    """
+    Get database URL from environment or config.
+
+    Priority:
+    1. DATABASE_URL environment variable (PostgreSQL for Azure)
+    2. alembic.ini sqlalchemy.url setting (SQLite for local dev)
+    """
+    # Check for PostgreSQL connection string from environment
+    database_url = os.getenv('DATABASE_URL')
+
+    if database_url:
+        # Handle Azure PostgreSQL connection strings
+        # Azure sometimes uses 'postgres://' instead of 'postgresql://'
+        if database_url.startswith('postgres://'):
+            database_url = database_url.replace('postgres://', 'postgresql://', 1)
+        return database_url
+
+    # Fall back to alembic.ini configuration (SQLite)
+    return config.get_main_option("sqlalchemy.url")
 
 
 def run_migrations_offline() -> None:
@@ -45,12 +71,15 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
+    url = get_database_url()
+
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        compare_type=True,  # Detect column type changes
+        compare_server_default=True,  # Detect default value changes
     )
 
     with context.begin_transaction():
@@ -64,18 +93,48 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    # Get database URL from environment or config
+    url = get_database_url()
+
+    # Create engine configuration
+    configuration = config.get_section(config.config_ini_section, {})
+    configuration['sqlalchemy.url'] = url
+
+    # Additional settings for PostgreSQL
+    if url and 'postgresql' in url:
+        # Connection pool settings for production
+        connectable = create_engine(
+            url,
+            poolclass=pool.NullPool,
+            connect_args={
+                'connect_timeout': 30,
+                'options': '-c lock_timeout=10000'  # 10 second lock timeout
+            } if 'postgresql' in url else {}
+        )
+    else:
+        connectable = engine_from_config(
+            configuration,
+            prefix="sqlalchemy.",
+            poolclass=pool.NullPool,
+        )
 
     with connectable.connect() as connection:
+        # Check if using PostgreSQL for pgvector support
+        is_postgresql = 'postgresql' in str(connection.engine.url)
+
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+            compare_server_default=True,
+            # Include custom types for pgvector
+            include_object=lambda obj, name, type_, reflected, compare_to: True,
         )
 
         with context.begin_transaction():
+            # For PostgreSQL, ensure pgvector extension is available
+            if is_postgresql:
+                connection.execute('CREATE EXTENSION IF NOT EXISTS vector')
             context.run_migrations()
 
 

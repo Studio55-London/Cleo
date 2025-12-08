@@ -1,0 +1,106 @@
+# Cleo AI Agent Workspace - Local Development Environment
+# Mirrors Azure production setup with PostgreSQL + pgvector
+
+version: '3.8'
+
+services:
+  # PostgreSQL with pgvector extension
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: cleoagent-db-dev
+    environment:
+      POSTGRES_DB: cleo
+      POSTGRES_USER: cleoagent
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-cleodev123}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cleoagent -d cleo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cleoagent-network
+
+  # Flask API Backend
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cleoagent-api-dev
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgresql://cleoagent:${DB_PASSWORD:-cleodev123}@db:5432/cleo
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - USE_PGVECTOR=true
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - FLASK_HOST=0.0.0.0
+      - FLASK_PORT=8080
+      # Optional integrations
+      - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
+      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET:-}
+    volumes:
+      # Mount source code for hot reload in development
+      - .:/app
+      # Persist data directories
+      - ./data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - cleoagent-network
+    restart: unless-stopped
+
+  # React Frontend (development)
+  frontend:
+    image: node:20-alpine
+    container_name: cleoagent-frontend-dev
+    working_dir: /app
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8080
+    volumes:
+      - ./cleo-frontend:/app
+      - frontend_node_modules:/app/node_modules
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - api
+    networks:
+      - cleoagent-network
+
+  # Azurite - Azure Storage Emulator (optional for local blob storage testing)
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite
+    container_name: cleoagent-azurite-dev
+    ports:
+      - "10000:10000"  # Blob
+      - "10001:10001"  # Queue
+      - "10002:10002"  # Table
+    volumes:
+      - azurite_data:/data
+    command: "azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 -l /data"
+    networks:
+      - cleoagent-network
+
+volumes:
+  postgres_data:
+    name: cleoagent-postgres-data
+  frontend_node_modules:
+    name: cleoagent-frontend-modules
+  azurite_data:
+    name: cleoagent-azurite-data
+
+networks:
+  cleoagent-network:
+    name: cleoagent-network
+    driver: bridge

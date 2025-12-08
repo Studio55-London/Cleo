@@ -1,0 +1,64 @@
+# Cleo Docker Build Ignore File
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.env.*
+.venv
+env/
+venv/
+ENV/
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov/
+.tox
+
+# Documentation
+docs/
+*.md
+!requirements.txt
+
+# Frontend (built separately)
+cleo-frontend/
+frontend/
+
+# Data directories (mounted as volumes)
+data/
+logs/
+*.log
+*.db
+*.sqlite
+
+# Azure/Deployment
+azure-credentials-*.txt
+*.tfstate
+*.tfvars
+
+# Development files
+docker-compose*.yml
+Makefile
+*.sh
+scripts/azure-setup.ps1
+
+# Other
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+nul
