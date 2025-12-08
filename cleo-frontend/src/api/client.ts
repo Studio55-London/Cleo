@@ -1,6 +1,9 @@
 import type { ApiError } from '@/types'
 
-const API_BASE = '/api'
+// Use environment variable for production, fallback to relative path for dev
+const API_BASE = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : '/api'
 
 class ApiClient {
   private baseUrl: string
