@@ -12,20 +12,20 @@ export function AppLayout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background-secondary">
-      {/* Icon Rail */}
+      {/* Icon Rail - Fixed 64px width */}
       <IconRail
         activePanel={activePanel}
         onPanelChange={handlePanelChange}
       />
 
-      {/* Context Panel */}
+      {/* Context Panel - Slides out from the left */}
       <ContextPanel
         isOpen={isPanelOpen}
         panelType={activePanel}
         onClose={closePanel}
       />
 
-      {/* Main Content */}
+      {/* Main Content - Takes remaining space */}
       <main className="flex-1 flex flex-col overflow-hidden bg-background">
         <Outlet />
       </main>

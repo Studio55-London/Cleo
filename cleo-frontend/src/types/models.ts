@@ -95,8 +95,44 @@ export interface User {
   full_name: string | null
   is_active: boolean
   is_admin: boolean
+  email_verified: boolean
   created_at: string
   last_login: string | null
+}
+
+// Auth types
+export interface AuthTokens {
+  access_token: string
+  refresh_token: string
+  token_type: string
+  expires_in: number
+}
+
+export interface LoginCredentials {
+  username: string
+  password: string
+}
+
+export interface RegisterInput {
+  username: string
+  email: string
+  password: string
+  full_name?: string
+}
+
+export interface PasswordResetRequest {
+  email: string
+}
+
+export interface PasswordResetConfirm {
+  token: string
+  password: string
+}
+
+export interface OAuthProvider {
+  name: string
+  enabled: boolean
+  authorize_url?: string
 }
 
 // Job interfaces

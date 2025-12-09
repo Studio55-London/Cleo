@@ -118,6 +118,57 @@ FLASK_HOST = os.getenv("FLASK_HOST", "0.0.0.0")
 FLASK_PORT = int(os.getenv("FLASK_PORT", os.getenv("WEBSITES_PORT", 8080)))
 
 # ============================================================================
+# JWT AUTHENTICATION CONFIGURATION
+# ============================================================================
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", SECRET_KEY)
+JWT_ACCESS_TOKEN_EXPIRES_SECONDS = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRES", 900))  # 15 minutes
+JWT_REFRESH_TOKEN_EXPIRES_SECONDS = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRES", 604800))  # 7 days
+
+# Account lockout settings
+MAX_FAILED_LOGIN_ATTEMPTS = int(os.getenv("MAX_FAILED_LOGIN_ATTEMPTS", 5))
+ACCOUNT_LOCKOUT_MINUTES = int(os.getenv("ACCOUNT_LOCKOUT_MINUTES", 30))
+
+# ============================================================================
+# OAUTH CONFIGURATION
+# ============================================================================
+# Google OAuth (for Sign in with Google)
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+GOOGLE_OAUTH_ENABLED = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+
+# Microsoft OAuth is already configured via AZURE_CLIENT_ID/SECRET above
+MICROSOFT_OAUTH_ENABLED = bool(AZURE_CLIENT_ID and AZURE_CLIENT_SECRET)
+
+# ============================================================================
+# EMAIL (SENDGRID) CONFIGURATION
+# ============================================================================
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+SENDGRID_FROM_EMAIL = os.getenv("SENDGRID_FROM_EMAIL", "noreply@okcleo.ai")
+SENDGRID_FROM_NAME = os.getenv("SENDGRID_FROM_NAME", "Cleo AI")
+EMAIL_ENABLED = bool(SENDGRID_API_KEY)
+
+# ============================================================================
+# RATE LIMITING CONFIGURATION
+# ============================================================================
+REDIS_URL = os.getenv("REDIS_URL", "memory://")  # Use memory for local dev
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
+
+# Rate limits (requests per time period)
+RATE_LIMITS = {
+    "login": "5/minute",
+    "register": "3/minute",
+    "password_reset": "3/hour",
+    "email_verification": "5/hour",
+    "api_default": "100/minute",
+}
+
+# ============================================================================
+# FRONTEND CONFIGURATION
+# ============================================================================
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://www.okcleo.ai")
+API_URL = os.getenv("API_URL", "https://api.okcleo.ai")
+
+# ============================================================================
 # LOGGING CONFIGURATION
 # ============================================================================
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
@@ -160,6 +211,10 @@ FEATURES = {
     "pgvector": USE_PGVECTOR,
     "blob_storage": BLOB_STORAGE_ENABLED,
     "azure_deployment": IS_AZURE,
+    "google_oauth": GOOGLE_OAUTH_ENABLED,
+    "microsoft_oauth": MICROSOFT_OAUTH_ENABLED,
+    "email_service": EMAIL_ENABLED,
+    "rate_limiting": RATE_LIMIT_ENABLED,
 }
 
 # ============================================================================

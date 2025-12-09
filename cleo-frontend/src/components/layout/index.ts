@@ -1,3 +1,4 @@
 export { AppLayout } from './AppLayout'
-export { Sidebar } from './Sidebar'
+export { IconRail, type PanelType } from './IconRail'
+export { ContextPanel } from './ContextPanel'
 export { RightSidebar } from './RightSidebar'

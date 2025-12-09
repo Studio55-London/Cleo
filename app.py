@@ -8,15 +8,22 @@ Supports deployment to:
 """
 import os
 import logging
-from datetime import datetime
+import secrets
+from datetime import datetime, timedelta
 from flask import Flask, render_template, jsonify, request, redirect, url_for, session
 from flask_cors import CORS
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
-from models import db, User, Agent, Job, Activity, Space, Message, Document, DocumentChunk, Entity, Relation, Integration, Skill, Task, Notification, CalendarEvent, TaskTemplate, seed_integrations
+from flask_jwt_extended import JWTManager, jwt_required, get_jwt_identity, get_jwt, create_access_token, create_refresh_token
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from models import db, User, Agent, Job, Activity, Space, Message, Document, DocumentChunk, Entity, Relation, Integration, Skill, Task, Notification, CalendarEvent, TaskTemplate, OAuthAccount, TokenBlocklist, seed_integrations
 from services.task_service import TaskService
 from services.calendar_service import CalendarService
 from services.notification_service import NotificationService
 from services.template_service import TaskTemplateService
+from services.auth.jwt_service import JWTService
+from services.auth.email_service import EmailService
+from services.auth.oauth_service import OAuthService
 from agents import get_agent, list_agent_names, agent_count
 from knowledge_processor import get_processor
 from integrations.todoist_helper import get_todoist_context
@@ -28,7 +35,10 @@ import json
 # Import configuration
 from config.settings import (
     DATABASE_URI, SECRET_KEY, DEBUG, IS_AZURE, IS_PRODUCTION,
-    USE_PGVECTOR, BLOB_STORAGE_ENABLED, LOG_LEVEL, LOCAL_DOCUMENT_PATH
+    USE_PGVECTOR, BLOB_STORAGE_ENABLED, LOG_LEVEL, LOCAL_DOCUMENT_PATH,
+    JWT_SECRET_KEY, JWT_ACCESS_TOKEN_EXPIRES_SECONDS, JWT_REFRESH_TOKEN_EXPIRES_SECONDS,
+    MAX_FAILED_LOGIN_ATTEMPTS, ACCOUNT_LOCKOUT_MINUTES, REDIS_URL, RATE_LIMIT_ENABLED,
+    RATE_LIMITS, FRONTEND_URL, GOOGLE_OAUTH_ENABLED, MICROSOFT_OAUTH_ENABLED, EMAIL_ENABLED
 )
 
 # Configure logging
@@ -103,6 +113,74 @@ def load_user(user_id):
     """Load user by ID for Flask-Login"""
     return db.session.get(User, int(user_id))
 
+# ============================================================================
+# JWT AUTHENTICATION CONFIGURATION
+# ============================================================================
+app.config['JWT_SECRET_KEY'] = JWT_SECRET_KEY
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(seconds=JWT_ACCESS_TOKEN_EXPIRES_SECONDS)
+app.config['JWT_REFRESH_TOKEN_EXPIRES'] = timedelta(seconds=JWT_REFRESH_TOKEN_EXPIRES_SECONDS)
+app.config['JWT_TOKEN_LOCATION'] = ['headers']
+app.config['JWT_HEADER_NAME'] = 'Authorization'
+app.config['JWT_HEADER_TYPE'] = 'Bearer'
+
+# Initialize JWT
+jwt = JWTManager(app)
+
+@jwt.token_in_blocklist_loader
+def check_if_token_in_blocklist(jwt_header, jwt_payload):
+    """Check if token is in blocklist (revoked)"""
+    jti = jwt_payload.get('jti')
+    token = TokenBlocklist.query.filter_by(jti=jti).first()
+    return token is not None
+
+@jwt.user_lookup_loader
+def user_lookup_callback(_jwt_header, jwt_data):
+    """Load user from JWT identity"""
+    identity = jwt_data['sub']
+    return User.query.get(identity)
+
+@jwt.expired_token_loader
+def expired_token_callback(jwt_header, jwt_payload):
+    """Handle expired tokens"""
+    return jsonify({
+        'success': False,
+        'error': 'Token has expired',
+        'code': 'TOKEN_EXPIRED'
+    }), 401
+
+@jwt.invalid_token_loader
+def invalid_token_callback(error):
+    """Handle invalid tokens"""
+    return jsonify({
+        'success': False,
+        'error': 'Invalid token',
+        'code': 'INVALID_TOKEN'
+    }), 401
+
+@jwt.unauthorized_loader
+def unauthorized_callback(error):
+    """Handle missing tokens"""
+    return jsonify({
+        'success': False,
+        'error': 'Authorization required',
+        'code': 'AUTH_REQUIRED'
+    }), 401
+
+# ============================================================================
+# RATE LIMITING CONFIGURATION
+# ============================================================================
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    storage_uri=REDIS_URL,
+    enabled=RATE_LIMIT_ENABLED,
+    default_limits=[RATE_LIMITS.get('api_default', '100/minute')]
+)
+
+# Initialize auth services
+email_service = EmailService()
+oauth_service = OAuthService()
+
 # ===================================
 # Web Routes
 # ===================================
@@ -172,12 +250,13 @@ def sync_personal_agents_to_spaces():
 
 
 # ===================================
-# API Routes - Authentication
+# API Routes - JWT Authentication
 # ===================================
 
 @app.route('/api/auth/register', methods=['POST'])
+@limiter.limit(RATE_LIMITS.get('register', '3/minute'))
 def register():
-    """Register a new user"""
+    """Register a new user with email verification"""
     try:
         data = request.get_json()
         username = data.get('username')
@@ -189,6 +268,13 @@ def register():
             return jsonify({
                 'success': False,
                 'message': 'Username, email, and password are required'
+            }), 400
+
+        # Validate password strength
+        if len(password) < 8:
+            return jsonify({
+                'success': False,
+                'message': 'Password must be at least 8 characters long'
             }), 400
 
         # Check if user already exists
@@ -207,25 +293,52 @@ def register():
         # Create new user
         user = User(username=username, email=email, full_name=full_name)
         user.set_password(password)
+        user.email_verified = not EMAIL_ENABLED  # Auto-verify if email not configured
 
         db.session.add(user)
-        db.session.commit()
+        db.session.flush()  # Get user ID
 
-        # Log the user in
-        login_user(user)
-        user.last_login = datetime.now()
-        db.session.commit()
+        # Send verification email if email service is enabled
+        if EMAIL_ENABLED:
+            verification_token = user.generate_verification_token()
+            db.session.commit()
+            email_service.send_verification_email(user.email, user.full_name or user.username, verification_token)
+            logger.info(f"New user registered (pending verification): {username}")
 
-        # Create default Personal space for the user
-        create_default_personal_space(user.id)
+            return jsonify({
+                'success': True,
+                'message': 'Registration successful. Please check your email to verify your account.',
+                'requires_verification': True
+            })
+        else:
+            # Email disabled - auto-verify and return tokens
+            db.session.commit()
 
-        logger.info(f"New user registered: {username}")
+            # Create default Personal space for the user
+            create_default_personal_space(user.id)
 
-        return jsonify({
-            'success': True,
-            'user': user.to_dict(),
-            'message': 'Registration successful'
-        })
+            # Generate JWT tokens
+            access_token = create_access_token(identity=user.id, additional_claims={
+                'username': user.username,
+                'email': user.email,
+                'is_admin': user.is_admin
+            })
+            refresh_token = create_refresh_token(identity=user.id)
+
+            user.last_login = datetime.now()
+            db.session.commit()
+
+            logger.info(f"New user registered: {username}")
+
+            return jsonify({
+                'success': True,
+                'user': user.to_dict(),
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+                'token_type': 'Bearer',
+                'expires_in': JWT_ACCESS_TOKEN_EXPIRES_SECONDS,
+                'message': 'Registration successful'
+            })
 
     except Exception as e:
         db.session.rollback()
@@ -237,44 +350,94 @@ def register():
 
 
 @app.route('/api/auth/login', methods=['POST'])
+@limiter.limit(RATE_LIMITS.get('login', '5/minute'))
 def login():
-    """Log in a user"""
+    """Log in a user with JWT tokens"""
     try:
         data = request.get_json()
-        username = data.get('username')
+        email_or_username = data.get('email') or data.get('username')
         password = data.get('password')
 
-        if not username or not password:
+        if not email_or_username or not password:
             return jsonify({
                 'success': False,
-                'message': 'Username and password are required'
+                'message': 'Email/username and password are required'
             }), 400
 
-        # Find user
-        user = User.query.filter_by(username=username).first()
+        # Find user by email or username
+        user = User.query.filter(
+            (User.email == email_or_username) | (User.username == email_or_username)
+        ).first()
 
-        if not user or not user.check_password(password):
+        if not user:
             return jsonify({
                 'success': False,
-                'message': 'Invalid username or password'
+                'message': 'Invalid credentials'
             }), 401
 
+        # Check if account is locked
+        if user.is_locked():
+            return jsonify({
+                'success': False,
+                'message': 'Account is temporarily locked. Please try again later.',
+                'code': 'ACCOUNT_LOCKED'
+            }), 403
+
+        # Check password
+        if not user.check_password(password):
+            user.record_failed_login(MAX_FAILED_LOGIN_ATTEMPTS, ACCOUNT_LOCKOUT_MINUTES)
+            db.session.commit()
+
+            if user.is_locked():
+                return jsonify({
+                    'success': False,
+                    'message': 'Too many failed attempts. Account is temporarily locked.',
+                    'code': 'ACCOUNT_LOCKED'
+                }), 403
+
+            return jsonify({
+                'success': False,
+                'message': 'Invalid credentials'
+            }), 401
+
+        # Check if account is active
         if not user.is_active:
             return jsonify({
                 'success': False,
-                'message': 'Account is disabled'
+                'message': 'Account is disabled',
+                'code': 'ACCOUNT_DISABLED'
             }), 403
 
-        # Log the user in
-        login_user(user)
+        # Check email verification
+        if not user.email_verified:
+            return jsonify({
+                'success': False,
+                'message': 'Please verify your email address',
+                'code': 'EMAIL_NOT_VERIFIED'
+            }), 403
+
+        # Reset failed login attempts on successful login
+        user.reset_login_attempts()
         user.last_login = datetime.now()
         db.session.commit()
 
-        logger.info(f"User logged in: {username}")
+        # Generate JWT tokens
+        access_token = create_access_token(identity=user.id, additional_claims={
+            'username': user.username,
+            'email': user.email,
+            'is_admin': user.is_admin
+        })
+        refresh_token = create_refresh_token(identity=user.id)
+
+        logger.info(f"User logged in: {user.username}")
 
         return jsonify({
             'success': True,
             'user': user.to_dict(),
+            'access_token': access_token,
+            'refresh_token': refresh_token,
+            'token_type': 'Bearer',
+            'expires_in': JWT_ACCESS_TOKEN_EXPIRES_SECONDS,
             'message': 'Login successful'
         })
 
@@ -287,13 +450,28 @@ def login():
 
 
 @app.route('/api/auth/logout', methods=['POST'])
-@login_required
+@jwt_required()
 def logout():
-    """Log out the current user"""
+    """Log out and revoke the current JWT token"""
     try:
-        username = current_user.username
-        logout_user()
-        logger.info(f"User logged out: {username}")
+        jwt_data = get_jwt()
+        jti = jwt_data['jti']
+        user_id = get_jwt_identity()
+        token_type = jwt_data.get('type', 'access')
+        expires_at = datetime.fromtimestamp(jwt_data['exp'])
+
+        # Add token to blocklist
+        blocked_token = TokenBlocklist(
+            jti=jti,
+            token_type=token_type,
+            user_id=user_id,
+            revoked_at=datetime.now(),
+            expires_at=expires_at
+        )
+        db.session.add(blocked_token)
+        db.session.commit()
+
+        logger.info(f"User logged out: {user_id}")
 
         return jsonify({
             'success': True,
@@ -301,6 +479,7 @@ def logout():
         })
 
     except Exception as e:
+        db.session.rollback()
         logger.error(f"Logout error: {e}")
         return jsonify({
             'success': False,
@@ -308,14 +487,60 @@ def logout():
         }), 500
 
 
-@app.route('/api/auth/me', methods=['GET'])
-@login_required
-def get_current_user():
-    """Get current logged-in user info"""
+@app.route('/api/auth/refresh', methods=['POST'])
+@jwt_required(refresh=True)
+@limiter.limit("30/minute")
+def refresh_token():
+    """Refresh access token using refresh token"""
     try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+
+        if not user or not user.is_active:
+            return jsonify({
+                'success': False,
+                'message': 'User not found or inactive'
+            }), 401
+
+        # Generate new access token
+        access_token = create_access_token(identity=user.id, additional_claims={
+            'username': user.username,
+            'email': user.email,
+            'is_admin': user.is_admin
+        })
+
         return jsonify({
             'success': True,
-            'user': current_user.to_dict()
+            'access_token': access_token,
+            'token_type': 'Bearer',
+            'expires_in': JWT_ACCESS_TOKEN_EXPIRES_SECONDS
+        })
+
+    except Exception as e:
+        logger.error(f"Token refresh error: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/auth/me', methods=['GET'])
+@jwt_required()
+def get_current_user_jwt():
+    """Get current authenticated user info (JWT)"""
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+
+        if not user:
+            return jsonify({
+                'success': False,
+                'message': 'User not found'
+            }), 404
+
+        return jsonify({
+            'success': True,
+            'user': user.to_dict()
         })
 
     except Exception as e:
@@ -323,6 +548,329 @@ def get_current_user():
             'success': False,
             'message': str(e)
         }), 500
+
+
+@app.route('/api/auth/verify-email', methods=['POST'])
+@limiter.limit(RATE_LIMITS.get('email_verification', '5/hour'))
+def verify_email():
+    """Verify email address with token"""
+    try:
+        data = request.get_json()
+        token = data.get('token')
+
+        if not token:
+            return jsonify({
+                'success': False,
+                'message': 'Verification token is required'
+            }), 400
+
+        # Find user by verification token
+        user = User.query.filter_by(email_verification_token=token).first()
+
+        if not user:
+            return jsonify({
+                'success': False,
+                'message': 'Invalid or expired verification token'
+            }), 400
+
+        # Verify email
+        user.email_verified = True
+        user.email_verification_token = None
+        user.email_verification_sent_at = None
+        db.session.commit()
+
+        # Create default Personal space for the user
+        create_default_personal_space(user.id)
+
+        # Generate JWT tokens
+        access_token = create_access_token(identity=user.id, additional_claims={
+            'username': user.username,
+            'email': user.email,
+            'is_admin': user.is_admin
+        })
+        refresh_token = create_refresh_token(identity=user.id)
+
+        user.last_login = datetime.now()
+        db.session.commit()
+
+        # Send welcome email
+        if EMAIL_ENABLED:
+            email_service.send_welcome_email(user.email, user.full_name or user.username)
+
+        logger.info(f"Email verified for user: {user.username}")
+
+        return jsonify({
+            'success': True,
+            'user': user.to_dict(),
+            'access_token': access_token,
+            'refresh_token': refresh_token,
+            'token_type': 'Bearer',
+            'expires_in': JWT_ACCESS_TOKEN_EXPIRES_SECONDS,
+            'message': 'Email verified successfully'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Email verification error: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/auth/resend-verification', methods=['POST'])
+@limiter.limit(RATE_LIMITS.get('email_verification', '5/hour'))
+def resend_verification():
+    """Resend verification email"""
+    try:
+        data = request.get_json()
+        email = data.get('email')
+
+        if not email:
+            return jsonify({
+                'success': False,
+                'message': 'Email is required'
+            }), 400
+
+        user = User.query.filter_by(email=email).first()
+
+        if not user:
+            # Don't reveal whether email exists
+            return jsonify({
+                'success': True,
+                'message': 'If the email exists, a verification link has been sent'
+            })
+
+        if user.email_verified:
+            return jsonify({
+                'success': False,
+                'message': 'Email is already verified'
+            }), 400
+
+        # Generate new verification token
+        verification_token = user.generate_verification_token()
+        db.session.commit()
+
+        # Send verification email
+        if EMAIL_ENABLED:
+            email_service.send_verification_email(user.email, user.full_name or user.username, verification_token)
+
+        return jsonify({
+            'success': True,
+            'message': 'Verification email sent'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Resend verification error: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/auth/forgot-password', methods=['POST'])
+@limiter.limit(RATE_LIMITS.get('password_reset', '3/hour'))
+def forgot_password():
+    """Request password reset email"""
+    try:
+        data = request.get_json()
+        email = data.get('email')
+
+        if not email:
+            return jsonify({
+                'success': False,
+                'message': 'Email is required'
+            }), 400
+
+        user = User.query.filter_by(email=email).first()
+
+        # Always return success to prevent email enumeration
+        if user and EMAIL_ENABLED:
+            reset_token = user.generate_password_reset_token()
+            db.session.commit()
+            email_service.send_password_reset_email(user.email, user.full_name or user.username, reset_token)
+
+        return jsonify({
+            'success': True,
+            'message': 'If the email exists, a password reset link has been sent'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Forgot password error: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/auth/reset-password', methods=['POST'])
+def reset_password():
+    """Reset password with token"""
+    try:
+        data = request.get_json()
+        token = data.get('token')
+        new_password = data.get('password')
+
+        if not token or not new_password:
+            return jsonify({
+                'success': False,
+                'message': 'Token and new password are required'
+            }), 400
+
+        if len(new_password) < 8:
+            return jsonify({
+                'success': False,
+                'message': 'Password must be at least 8 characters long'
+            }), 400
+
+        # Find user by reset token
+        user = User.query.filter_by(password_reset_token=token).first()
+
+        if not user:
+            return jsonify({
+                'success': False,
+                'message': 'Invalid or expired reset token'
+            }), 400
+
+        # Check if token is expired
+        if user.password_reset_expires_at and user.password_reset_expires_at < datetime.now():
+            return jsonify({
+                'success': False,
+                'message': 'Reset token has expired'
+            }), 400
+
+        # Update password
+        user.set_password(new_password)
+        user.clear_password_reset_token()
+        user.reset_login_attempts()  # Reset any lockout
+        db.session.commit()
+
+        # Send notification email
+        if EMAIL_ENABLED:
+            email_service.send_password_changed_notification(user.email, user.full_name or user.username)
+
+        logger.info(f"Password reset for user: {user.username}")
+
+        return jsonify({
+            'success': True,
+            'message': 'Password reset successfully. You can now log in with your new password.'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Password reset error: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+# ===================================
+# OAuth Routes
+# ===================================
+
+@app.route('/api/auth/oauth/<provider>/authorize', methods=['GET'])
+def oauth_authorize(provider):
+    """Get OAuth authorization URL"""
+    try:
+        if provider not in ['google', 'microsoft']:
+            return jsonify({
+                'success': False,
+                'message': 'Invalid OAuth provider'
+            }), 400
+
+        if provider == 'google' and not GOOGLE_OAUTH_ENABLED:
+            return jsonify({
+                'success': False,
+                'message': 'Google OAuth is not configured'
+            }), 400
+
+        if provider == 'microsoft' and not MICROSOFT_OAUTH_ENABLED:
+            return jsonify({
+                'success': False,
+                'message': 'Microsoft OAuth is not configured'
+            }), 400
+
+        # Generate state for CSRF protection
+        state = secrets.token_urlsafe(32)
+        session['oauth_state'] = state
+
+        auth_url = oauth_service.get_authorization_url(provider, state)
+
+        return jsonify({
+            'success': True,
+            'authorization_url': auth_url
+        })
+
+    except Exception as e:
+        logger.error(f"OAuth authorize error: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@app.route('/api/auth/oauth/<provider>/callback', methods=['GET'])
+def oauth_callback(provider):
+    """Handle OAuth callback"""
+    try:
+        code = request.args.get('code')
+        state = request.args.get('state')
+        error = request.args.get('error')
+
+        if error:
+            return redirect(f"{FRONTEND_URL}/login?error={error}")
+
+        if not code:
+            return redirect(f"{FRONTEND_URL}/login?error=no_code")
+
+        # Exchange code for tokens
+        tokens = oauth_service.exchange_code_for_tokens(provider, code)
+
+        # Get user info
+        user_info = oauth_service.get_user_info(provider, tokens['access_token'])
+
+        # Find or create user
+        user = oauth_service.find_or_create_user(provider, user_info, tokens)
+
+        # Generate JWT tokens
+        access_token = create_access_token(identity=user.id, additional_claims={
+            'username': user.username,
+            'email': user.email,
+            'is_admin': user.is_admin
+        })
+        refresh_token = create_refresh_token(identity=user.id)
+
+        # Redirect to frontend with tokens
+        callback_url = f"{FRONTEND_URL}/auth/callback?access_token={access_token}&refresh_token={refresh_token}"
+
+        logger.info(f"OAuth login successful for user: {user.username} via {provider}")
+
+        return redirect(callback_url)
+
+    except Exception as e:
+        logger.error(f"OAuth callback error: {e}")
+        return redirect(f"{FRONTEND_URL}/login?error=oauth_failed")
+
+
+@app.route('/api/auth/oauth/providers', methods=['GET'])
+def oauth_providers():
+    """Get available OAuth providers"""
+    return jsonify({
+        'success': True,
+        'providers': {
+            'google': {
+                'enabled': GOOGLE_OAUTH_ENABLED,
+                'name': 'Google'
+            },
+            'microsoft': {
+                'enabled': MICROSOFT_OAUTH_ENABLED,
+                'name': 'Microsoft'
+            }
+        }
+    })
 
 
 # ===================================

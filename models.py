@@ -34,12 +34,31 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(255), nullable=False)
+    password_hash = db.Column(db.String(255), nullable=True)  # Nullable for OAuth-only users
     full_name = db.Column(db.String(100))
     is_active = db.Column(db.Boolean, default=True)
     is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.now)
     last_login = db.Column(db.DateTime)
+
+    # Email Verification
+    email_verified = db.Column(db.Boolean, default=False)
+    email_verification_token = db.Column(db.String(255), nullable=True)
+    email_verification_sent_at = db.Column(db.DateTime, nullable=True)
+
+    # Password Reset
+    password_reset_token = db.Column(db.String(255), nullable=True)
+    password_reset_expires_at = db.Column(db.DateTime, nullable=True)
+
+    # Account Lockout
+    failed_login_attempts = db.Column(db.Integer, default=0)
+    locked_until = db.Column(db.DateTime, nullable=True)
+
+    # JWT Token Management
+    refresh_token_jti = db.Column(db.String(255), nullable=True)
+
+    # Relationships
+    oauth_accounts = db.relationship('OAuthAccount', backref='user', lazy=True, cascade='all, delete-orphan')
 
     def set_password(self, password):
         """Hash and set password"""
@@ -47,7 +66,47 @@ class User(UserMixin, db.Model):
 
     def check_password(self, password):
         """Check password against hash"""
+        if not self.password_hash:
+            return False
         return check_password_hash(self.password_hash, password)
+
+    def is_locked(self):
+        """Check if account is currently locked"""
+        if self.locked_until is None:
+            return False
+        return datetime.now() < self.locked_until
+
+    def record_failed_login(self, max_attempts=5, lockout_minutes=30):
+        """Record a failed login attempt and lock account if needed"""
+        self.failed_login_attempts = (self.failed_login_attempts or 0) + 1
+        if self.failed_login_attempts >= max_attempts:
+            from datetime import timedelta
+            self.locked_until = datetime.now() + timedelta(minutes=lockout_minutes)
+
+    def reset_login_attempts(self):
+        """Reset failed login attempts after successful login"""
+        self.failed_login_attempts = 0
+        self.locked_until = None
+
+    def generate_verification_token(self):
+        """Generate email verification token"""
+        import secrets
+        self.email_verification_token = secrets.token_urlsafe(32)
+        self.email_verification_sent_at = datetime.now()
+        return self.email_verification_token
+
+    def generate_password_reset_token(self, expires_hours=24):
+        """Generate password reset token"""
+        import secrets
+        from datetime import timedelta
+        self.password_reset_token = secrets.token_urlsafe(32)
+        self.password_reset_expires_at = datetime.now() + timedelta(hours=expires_hours)
+        return self.password_reset_token
+
+    def clear_password_reset_token(self):
+        """Clear password reset token after use"""
+        self.password_reset_token = None
+        self.password_reset_expires_at = None
 
     def to_dict(self):
         """Convert user to dictionary (without sensitive data)"""
@@ -58,12 +117,62 @@ class User(UserMixin, db.Model):
             'full_name': self.full_name,
             'is_active': self.is_active,
             'is_admin': self.is_admin,
-            'created_at': self.created_at.isoformat(),
-            'last_login': self.last_login.isoformat() if self.last_login else None
+            'email_verified': self.email_verified,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'last_login': self.last_login.isoformat() if self.last_login else None,
+            'has_password': self.password_hash is not None,
+            'oauth_providers': [acc.provider for acc in self.oauth_accounts] if self.oauth_accounts else []
         }
 
     def __repr__(self):
         return f'<User {self.username}>'
+
+
+class OAuthAccount(db.Model):
+    """OAuth provider accounts linked to users"""
+    __tablename__ = 'oauth_accounts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    provider = db.Column(db.String(50), nullable=False)  # google, microsoft
+    provider_user_id = db.Column(db.String(255), nullable=False)
+    provider_email = db.Column(db.String(255))
+    access_token = db.Column(db.Text)
+    refresh_token = db.Column(db.Text)
+    token_expires_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+    # Unique constraint on provider + provider_user_id
+    __table_args__ = (
+        db.UniqueConstraint('provider', 'provider_user_id', name='uq_oauth_provider_user'),
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'provider': self.provider,
+            'provider_email': self.provider_email,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+
+    def __repr__(self):
+        return f'<OAuthAccount {self.provider} for User {self.user_id}>'
+
+
+class TokenBlocklist(db.Model):
+    """Blocklist for revoked JWT tokens"""
+    __tablename__ = 'token_blocklist'
+
+    id = db.Column(db.Integer, primary_key=True)
+    jti = db.Column(db.String(255), nullable=False, unique=True, index=True)
+    token_type = db.Column(db.String(20), nullable=False)  # access, refresh
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    revoked_at = db.Column(db.DateTime, default=datetime.now, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+
+    def __repr__(self):
+        return f'<TokenBlocklist {self.jti[:8]}... ({self.token_type})>'
 
 
 class Agent(db.Model):

@@ -128,20 +128,93 @@ export interface TestIntegrationResponse {
   message: string
 }
 
-// Auth API
+// Auth API (JWT-based)
 export interface LoginRequest {
   username: string
   password: string
 }
 
 export interface LoginResponse {
-  success: boolean
-  message?: string
-  redirect?: string
+  access_token: string
+  refresh_token: string
+  token_type: string
+  expires_in: number
+  user: import('./models').User
+}
+
+export interface RegisterRequest {
+  username: string
+  email: string
+  password: string
+  full_name?: string
+}
+
+export interface RegisterResponse {
+  message: string
+  user: {
+    id: number
+    username: string
+    email: string
+  }
+}
+
+export interface RefreshTokenResponse {
+  access_token: string
+  token_type: string
+  expires_in: number
 }
 
 export interface LogoutResponse {
-  success: boolean
+  message: string
+}
+
+export interface GetCurrentUserResponse {
+  user: import('./models').User
+}
+
+export interface VerifyEmailRequest {
+  token: string
+}
+
+export interface VerifyEmailResponse {
+  message: string
+}
+
+export interface ResendVerificationResponse {
+  message: string
+}
+
+export interface ForgotPasswordRequest {
+  email: string
+}
+
+export interface ForgotPasswordResponse {
+  message: string
+}
+
+export interface ResetPasswordRequest {
+  token: string
+  password: string
+}
+
+export interface ResetPasswordResponse {
+  message: string
+}
+
+export interface OAuthAuthorizeResponse {
+  authorize_url: string
+}
+
+export interface OAuthCallbackResponse {
+  access_token: string
+  refresh_token: string
+  token_type: string
+  expires_in: number
+  user: import('./models').User
+}
+
+export interface OAuthProvidersResponse {
+  providers: import('./models').OAuthProvider[]
 }
 
 // Task API
@@ -177,6 +250,7 @@ export interface GetSpaceTasksResponse {
 export interface ApiError {
   status: number
   message: string
+  code?: string
   details?: Record<string, unknown>
 }
 

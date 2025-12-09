@@ -32,40 +32,55 @@ const panelTitles: Record<PanelType, string> = {
 }
 
 export function ContextPanel({ isOpen, panelType, onClose }: ContextPanelProps) {
-  if (!panelType) return null
-
   return (
-    <aside
-      className={cn(
-        'flex flex-col border-r border-border bg-background overflow-hidden transition-all duration-200 ease-out',
-        isOpen ? 'w-[280px]' : 'w-0'
-      )}
-    >
-      {/* Panel Header */}
-      <div className="flex items-center justify-between h-14 px-4 border-b border-border shrink-0">
-        <h2 className="font-semibold text-foreground">{panelTitles[panelType]}</h2>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
+    <>
+      {/* Backdrop for mobile / click-outside behavior */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 bg-black/20 z-30 lg:hidden"
           onClick={onClose}
-        >
-          <X className="h-4 w-4" />
-        </Button>
-      </div>
+        />
+      )}
 
-      {/* Panel Content */}
-      <div className="flex-1 overflow-hidden">
-        {panelType === 'conversations' && <ConversationsPanel />}
-        {panelType === 'history' && <HistoryPanel />}
-        {panelType === 'spaces' && <SpacesPanel />}
-        {panelType === 'agents' && <AgentsPanel />}
-        {panelType === 'skills' && <SkillsPanel />}
-        {panelType === 'documents' && <DocumentsPanel />}
-        {panelType === 'topics' && <TopicsPanel />}
-        {panelType === 'tasks' && <TasksPanel />}
-        {panelType === 'settings' && <SettingsPanel />}
-      </div>
-    </aside>
+      {/* Slide-out Panel */}
+      <aside
+        className={cn(
+          'fixed top-0 left-16 h-full w-[320px] flex flex-col',
+          'border-r border-border bg-background shadow-lg',
+          'transition-transform duration-300 ease-out z-40',
+          isOpen ? 'translate-x-0' : '-translate-x-full'
+        )}
+      >
+        {panelType && (
+          <>
+            {/* Panel Header */}
+            <div className="flex items-center justify-between h-14 px-5 border-b border-border shrink-0">
+              <h2 className="text-lg font-semibold text-foreground">{panelTitles[panelType]}</h2>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 hover:bg-background-hover"
+                onClick={onClose}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            {/* Panel Content */}
+            <div className="flex-1 overflow-hidden">
+              {panelType === 'conversations' && <ConversationsPanel />}
+              {panelType === 'history' && <HistoryPanel />}
+              {panelType === 'spaces' && <SpacesPanel />}
+              {panelType === 'agents' && <AgentsPanel />}
+              {panelType === 'skills' && <SkillsPanel />}
+              {panelType === 'documents' && <DocumentsPanel />}
+              {panelType === 'topics' && <TopicsPanel />}
+              {panelType === 'tasks' && <TasksPanel />}
+              {panelType === 'settings' && <SettingsPanel />}
+            </div>
+          </>
+        )}
+      </aside>
+    </>
   )
 }
