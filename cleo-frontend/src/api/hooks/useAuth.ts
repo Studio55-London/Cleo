@@ -38,7 +38,7 @@ export const authKeys = {
  * Hook to login with username and password
  */
 export function useLogin() {
-  const { setAuth, setLoading, setError } = useAuthStore()
+  const { setAuth, setLoading, setError, setInitialized } = useAuthStore()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -48,13 +48,18 @@ export function useLogin() {
       return apiClient.post<LoginResponse>('/auth/login', credentials, true)
     },
     onSuccess: (data) => {
+      // Store auth state - user data comes from login response
       setAuth(data.user, {
         access_token: data.access_token,
         refresh_token: data.refresh_token,
         token_type: data.token_type,
         expires_in: data.expires_in,
       })
-      queryClient.invalidateQueries({ queryKey: authKeys.currentUser() })
+      // Mark as initialized since we have valid user data from login
+      setInitialized(true)
+      // Set the user data directly in the query cache instead of invalidating
+      // This avoids a race condition where /auth/me is called before tokens are stored
+      queryClient.setQueryData(authKeys.currentUser(), { user: data.user })
       navigate('/')
     },
     onError: (error) => {
@@ -226,7 +231,7 @@ export function useOAuthProviders() {
  * Called from the callback page to exchange code for tokens
  */
 export function useOAuthCallback() {
-  const { setAuth, setError } = useAuthStore()
+  const { setAuth, setError, setInitialized } = useAuthStore()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -247,7 +252,10 @@ export function useOAuthCallback() {
         token_type: data.token_type,
         expires_in: data.expires_in,
       })
-      queryClient.invalidateQueries({ queryKey: authKeys.currentUser() })
+      // Mark as initialized since we have valid user data from OAuth callback
+      setInitialized(true)
+      // Set the user data directly in the query cache instead of invalidating
+      queryClient.setQueryData(authKeys.currentUser(), { user: data.user })
       navigate('/')
     },
     onError: (error) => {
