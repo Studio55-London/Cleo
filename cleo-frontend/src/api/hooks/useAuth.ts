@@ -268,13 +268,24 @@ export function useOAuthCallback() {
 /**
  * Hook to initialize auth state on app start
  * Checks if user is logged in and fetches user data
+ *
+ * IMPORTANT: This hook is only used on page refresh/initial load.
+ * After login, the user data is set directly via setQueryData to avoid
+ * race conditions with token storage.
  */
 export function useInitializeAuth() {
-  const { isAuthenticated, accessToken, setInitialized, clearAuth } = useAuthStore()
+  const { isAuthenticated, accessToken, user, setInitialized, clearAuth, setUser } = useAuthStore()
 
   return useQuery<GetCurrentUserResponse | null, ApiError>({
     queryKey: ['auth', 'initialize'],
     queryFn: async () => {
+      // If we already have user data in the store (from recent login), skip the API call
+      // This prevents the race condition where /auth/me is called before tokens are stored
+      if (user && isAuthenticated && accessToken) {
+        setInitialized(true)
+        return { user }
+      }
+
       if (!isAuthenticated || !accessToken) {
         setInitialized(true)
         return null
@@ -282,6 +293,9 @@ export function useInitializeAuth() {
 
       try {
         const response = await apiClient.get<GetCurrentUserResponse>('/auth/me')
+        if (response.user) {
+          setUser(response.user)
+        }
         setInitialized(true)
         return response
       } catch {
