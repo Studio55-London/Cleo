@@ -48,7 +48,7 @@ export function ContextPanel({ isOpen, panelType, onClose }: ContextPanelProps) 
           'fixed top-0 left-16 h-full w-[320px] flex flex-col',
           'border-r border-border bg-background shadow-lg',
           'transition-transform duration-300 ease-out z-40',
-          isOpen ? 'translate-x-0' : '-translate-x-full'
+          isOpen ? 'translate-x-0' : '-translate-x-full pointer-events-none'
         )}
       >
         {panelType && (
