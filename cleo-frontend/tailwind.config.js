@@ -81,7 +81,7 @@ export default {
         input: "hsl(var(--input))",
       },
       spacing: {
-        "sidebar": "280px",
+        "sidebar": "64px",
         "header": "64px",
         "right-sidebar": "320px",
       },
