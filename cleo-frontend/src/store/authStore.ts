@@ -55,6 +55,9 @@ const parseJwt = (token: string): { exp: number } | null => {
   }
 }
 
+// Storage version - increment to reset corrupted localStorage
+const STORAGE_VERSION = 1
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -146,6 +149,7 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'cleo-auth-storage',
+      version: STORAGE_VERSION,
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         accessToken: state.accessToken,
@@ -153,6 +157,31 @@ export const useAuthStore = create<AuthState>()(
         user: state.user,
         isAuthenticated: state.isAuthenticated,
       }),
+      // Migration function to handle old storage format
+      migrate: (persistedState: unknown, version: number) => {
+        // If no version or old version, reset to defaults
+        if (version < STORAGE_VERSION) {
+          return {
+            accessToken: null,
+            refreshToken: null,
+            user: null,
+            isAuthenticated: false,
+          }
+        }
+        return persistedState as {
+          accessToken: string | null
+          refreshToken: string | null
+          user: import('@/types').User | null
+          isAuthenticated: boolean
+        }
+      },
+      // Validate state on load to prevent corrupted data from crashing
+      onRehydrateStorage: () => (state, error) => {
+        if (error) {
+          console.warn('Auth storage rehydration failed, clearing storage', error)
+          localStorage.removeItem('cleo-auth-storage')
+        }
+      },
     }
   )
 )

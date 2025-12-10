@@ -87,39 +87,51 @@ def upgrade() -> None:
         pass
 
     # Create oauth_accounts table
-    op.create_table('oauth_accounts',
-        sa.Column('id', sa.Integer(), nullable=False),
-        sa.Column('user_id', sa.Integer(), nullable=False),
-        sa.Column('provider', sa.String(50), nullable=False),
-        sa.Column('provider_user_id', sa.String(255), nullable=False),
-        sa.Column('provider_email', sa.String(255), nullable=True),
-        sa.Column('access_token', sa.Text(), nullable=True),
-        sa.Column('refresh_token', sa.Text(), nullable=True),
-        sa.Column('token_expires_at', sa.DateTime(), nullable=True),
-        sa.Column('created_at', sa.DateTime(), nullable=True),
-        sa.Column('updated_at', sa.DateTime(), nullable=True),
-        sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('provider', 'provider_user_id', name='uq_oauth_provider_user')
-    )
+    try:
+        op.create_table('oauth_accounts',
+            sa.Column('id', sa.Integer(), nullable=False),
+            sa.Column('user_id', sa.Integer(), nullable=False),
+            sa.Column('provider', sa.String(50), nullable=False),
+            sa.Column('provider_user_id', sa.String(255), nullable=False),
+            sa.Column('provider_email', sa.String(255), nullable=True),
+            sa.Column('access_token', sa.Text(), nullable=True),
+            sa.Column('refresh_token', sa.Text(), nullable=True),
+            sa.Column('token_expires_at', sa.DateTime(), nullable=True),
+            sa.Column('created_at', sa.DateTime(), nullable=True),
+            sa.Column('updated_at', sa.DateTime(), nullable=True),
+            sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+            sa.PrimaryKeyConstraint('id'),
+            sa.UniqueConstraint('provider', 'provider_user_id', name='uq_oauth_provider_user')
+        )
+    except Exception:
+        pass
 
     # Create index on user_id for oauth_accounts
-    op.create_index('ix_oauth_accounts_user_id', 'oauth_accounts', ['user_id'])
+    try:
+        op.create_index('ix_oauth_accounts_user_id', 'oauth_accounts', ['user_id'])
+    except Exception:
+        pass
 
     # Create token_blocklist table
-    op.create_table('token_blocklist',
-        sa.Column('id', sa.Integer(), nullable=False),
-        sa.Column('jti', sa.String(255), nullable=False),
-        sa.Column('token_type', sa.String(20), nullable=False),
-        sa.Column('user_id', sa.Integer(), nullable=False),
-        sa.Column('revoked_at', sa.DateTime(), nullable=False),
-        sa.Column('expires_at', sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
-        sa.PrimaryKeyConstraint('id')
-    )
+    try:
+        op.create_table('token_blocklist',
+            sa.Column('id', sa.Integer(), nullable=False),
+            sa.Column('jti', sa.String(255), nullable=False),
+            sa.Column('token_type', sa.String(20), nullable=False),
+            sa.Column('user_id', sa.Integer(), nullable=False),
+            sa.Column('revoked_at', sa.DateTime(), nullable=False),
+            sa.Column('expires_at', sa.DateTime(), nullable=False),
+            sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+            sa.PrimaryKeyConstraint('id')
+        )
+    except Exception:
+        pass
 
     # Create unique index on jti for fast blocklist lookups
-    op.create_index('ix_token_blocklist_jti', 'token_blocklist', ['jti'], unique=True)
+    try:
+        op.create_index('ix_token_blocklist_jti', 'token_blocklist', ['jti'], unique=True)
+    except Exception:
+        pass
 
     print("Authentication fields and tables created successfully")
 

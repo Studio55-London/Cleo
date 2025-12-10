@@ -21,7 +21,8 @@ export function OAuthButtons() {
     )
   }
 
-  const providers = providersData?.providers || []
+  // Ensure providers is always an array (API might return empty object instead of array)
+  const providers = Array.isArray(providersData?.providers) ? providersData.providers : []
   const enabledProviders = providers.filter((p) => p.enabled)
 
   if (enabledProviders.length === 0) {
