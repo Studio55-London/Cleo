@@ -33,6 +33,37 @@ export interface UpdateAgentInput {
   status?: AgentStatus
 }
 
+// Knowledge Base interfaces
+export interface KnowledgeBase {
+  id: number
+  name: string
+  description: string | null
+  space_id: number
+  space_name: string | null
+  is_default: boolean
+  document_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface KnowledgeBaseSummary {
+  id: number
+  name: string
+  document_count: number
+  space_id?: number
+}
+
+export interface CreateKnowledgeBaseInput {
+  name: string
+  description?: string
+  is_default?: boolean
+}
+
+export interface UpdateKnowledgeBaseInput {
+  name?: string
+  description?: string
+}
+
 // Space interfaces
 export interface Space {
   id: string
@@ -41,6 +72,9 @@ export interface Space {
   agents: AgentSummary[]
   master_agent_id: number | null
   master_agent: AgentSummary | null
+  is_global: boolean
+  user_id: number | null
+  knowledge_bases: KnowledgeBaseSummary[]
   created_at: string
   updated_at: string
   unread: number
@@ -174,6 +208,12 @@ export interface Activity {
 // Knowledge Base interfaces
 export type DocumentStatus = 'processing' | 'ready' | 'error'
 
+export interface DocumentKnowledgeBase {
+  id: number
+  name: string
+  space_id: number
+}
+
 export interface Document {
   id: number
   name: string
@@ -184,6 +224,7 @@ export interface Document {
   entities: number
   uploaded_at: string
   processed_at: string | null
+  knowledge_bases: DocumentKnowledgeBase[]
 }
 
 export interface DocumentChunk {

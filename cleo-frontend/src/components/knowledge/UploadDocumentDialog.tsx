@@ -9,21 +9,27 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
-import { useUploadDocument } from '@/api'
+import { useUploadDocument, useKnowledgeBases } from '@/api'
+import { KnowledgeBaseSelector } from './KnowledgeBaseSelector'
 
 interface UploadDocumentDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  defaultKnowledgeBaseIds?: number[]
 }
 
 export function UploadDocumentDialog({
   open,
   onOpenChange,
+  defaultKnowledgeBaseIds = [],
 }: UploadDocumentDialogProps) {
   const [file, setFile] = useState<File | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [selectedKBIds, setSelectedKBIds] = useState<number[]>(defaultKnowledgeBaseIds)
   const uploadDocument = useUploadDocument()
+  const { data: knowledgeBases = [] } = useKnowledgeBases()
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -58,8 +64,12 @@ export function UploadDocumentDialog({
     if (!file) return
 
     try {
-      await uploadDocument.mutateAsync(file)
+      await uploadDocument.mutateAsync({
+        file,
+        knowledgeBaseIds: selectedKBIds.length > 0 ? selectedKBIds : undefined,
+      })
       setFile(null)
+      setSelectedKBIds(defaultKnowledgeBaseIds)
       onOpenChange(false)
     } catch (error) {
       console.error('Failed to upload document:', error)
@@ -68,6 +78,7 @@ export function UploadDocumentDialog({
 
   const handleClose = () => {
     setFile(null)
+    setSelectedKBIds(defaultKnowledgeBaseIds)
     onOpenChange(false)
   }
 
@@ -82,7 +93,7 @@ export function UploadDocumentDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="py-4">
+        <div className="py-4 space-y-4">
           <div
             className={cn(
               'border-2 border-dashed rounded-lg p-8 text-center transition-colors',
@@ -133,6 +144,21 @@ export function UploadDocumentDialog({
               </>
             )}
           </div>
+
+          {knowledgeBases.length > 0 && (
+            <div className="grid gap-2">
+              <Label>Add to Knowledge Bases (optional)</Label>
+              <KnowledgeBaseSelector
+                knowledgeBases={knowledgeBases}
+                selectedIds={selectedKBIds}
+                onSelectionChange={setSelectedKBIds}
+                placeholder="Select knowledge bases..."
+              />
+              <p className="text-xs text-foreground-tertiary">
+                Leave empty to add to the default knowledge base
+              </p>
+            </div>
+          )}
         </div>
 
         <DialogFooter>

@@ -4,8 +4,9 @@ import { ChatView } from '@/features/chat'
 import { AgentsPage } from '@/features/agents'
 import { KnowledgePage } from '@/features/knowledge'
 import { IntegrationsPage } from '@/features/integrations'
-import { SkillsPage } from '@/features/skills'
 import { TasksPage } from '@/features/tasks'
+import { SpacesPage } from '@/features/spaces'
+import { SettingsPage } from '@/features/settings'
 
 // Auth components
 import {
@@ -46,11 +47,12 @@ function App() {
         <Route index element={<Navigate to="/chat" replace />} />
         <Route path="chat" element={<ChatView />} />
         <Route path="chat/:spaceId" element={<ChatView />} />
+        <Route path="spaces" element={<SpacesPage />} />
         <Route path="agents" element={<AgentsPage />} />
-        <Route path="skills" element={<SkillsPage />} />
         <Route path="tasks" element={<TasksPage />} />
         <Route path="knowledge" element={<KnowledgePage />} />
         <Route path="integrations" element={<IntegrationsPage />} />
+        <Route path="settings" element={<SettingsPage />} />
       </Route>
 
       {/* Catch all - redirect to home */}

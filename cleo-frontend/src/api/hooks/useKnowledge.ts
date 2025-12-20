@@ -31,19 +31,35 @@ export function useDocuments() {
   })
 }
 
+interface UploadDocumentOptions {
+  file: File
+  knowledgeBaseIds?: number[]
+}
+
 export function useUploadDocument() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async (file: File) => {
-      const response = await apiClient.uploadFile<UploadDocumentResponse>(
+    mutationFn: async ({ file, knowledgeBaseIds }: UploadDocumentOptions) => {
+      const formData = new FormData()
+      formData.append('file', file)
+      if (knowledgeBaseIds && knowledgeBaseIds.length > 0) {
+        formData.append('knowledge_base_ids', JSON.stringify(knowledgeBaseIds))
+      }
+      const response = await apiClient.post<UploadDocumentResponse>(
         ENDPOINTS.KNOWLEDGE_UPLOAD,
-        file
+        formData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        }
       )
-      return response.document
+      return response.data.document
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents() })
+      queryClient.invalidateQueries({ queryKey: ['knowledgeBases'] })
     },
   })
 }

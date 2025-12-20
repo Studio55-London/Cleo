@@ -1,19 +1,18 @@
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import {
   MessageSquare,
-  History,
   Layers,
-  Upload,
-  Bookmark,
   ListTodo,
   Settings,
   Sparkles,
   Users,
-  Wand2,
   LogOut,
   User,
-  Palette,
+  Moon,
+  Sun,
+  BookOpen,
+  Plug,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -31,38 +30,29 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-
-export type PanelType = 'conversations' | 'history' | 'spaces' | 'agents' | 'skills' | 'documents' | 'topics' | 'tasks' | 'settings'
-
-interface IconRailProps {
-  activePanel: PanelType | null
-  onPanelChange: (panel: PanelType | null) => void
-}
+import { useAuthStore } from '@/store/authStore'
 
 interface NavIconProps {
   icon: React.ElementType
   label: string
-  panel: PanelType
-  activePanel: PanelType | null
-  onClick: () => void
+  to: string
+  isActive: boolean
 }
 
-function NavIcon({ icon: Icon, label, panel, activePanel, onClick }: NavIconProps) {
-  const isActive = activePanel === panel
-
+function NavIcon({ icon: Icon, label, to, isActive }: NavIconProps) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button
-          onClick={onClick}
+        <Link
+          to={to}
           className={cn(
             'flex items-center justify-center w-12 h-12 rounded-lg transition-all duration-150',
-            'hover:bg-background-hover hover:scale-105',
-            isActive && 'bg-primary text-primary-foreground hover:bg-primary-hover'
+            'text-foreground-secondary hover:text-foreground hover:bg-background-hover hover:scale-105',
+            isActive && 'bg-primary text-primary-foreground hover:bg-primary-hover hover:text-primary-foreground'
           )}
         >
           <Icon className="h-5 w-5" />
-        </button>
+        </Link>
       </TooltipTrigger>
       <TooltipContent side="right" sideOffset={10}>
         {label}
@@ -75,42 +65,73 @@ function Divider() {
   return <div className="w-8 h-px bg-border my-2" />
 }
 
-export function IconRail({ activePanel, onPanelChange }: IconRailProps) {
+export function IconRail() {
+  const location = useLocation()
+  const { user, logout } = useAuthStore()
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('cleo-dark-mode')
+    return saved ? saved === 'true' : false
+  })
 
-  const handlePanelClick = (panel: PanelType) => {
-    if (activePanel === panel) {
-      onPanelChange(null)
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark')
     } else {
-      onPanelChange(panel)
+      document.documentElement.classList.remove('dark')
     }
+    localStorage.setItem('cleo-dark-mode', String(isDarkMode))
+  }, [isDarkMode])
+
+  const toggleDarkMode = () => {
+    setIsDarkMode(prev => !prev)
   }
 
-  // Primary navigation (chat focused)
-  const primaryNavItems: { icon: React.ElementType; label: string; panel: PanelType }[] = [
-    { icon: MessageSquare, label: 'Conversations', panel: 'conversations' },
-    { icon: History, label: 'History', panel: 'history' },
-    { icon: Layers, label: 'Spaces', panel: 'spaces' },
+  const isActive = (path: string) => {
+    if (path === '/chat') {
+      return location.pathname === '/chat' || location.pathname.startsWith('/chat/')
+    }
+    return location.pathname.startsWith(path)
+  }
+
+  // Primary navigation (chat & spaces)
+  const primaryNavItems = [
+    { icon: MessageSquare, label: 'Chat', to: '/chat' },
+    { icon: Layers, label: 'Spaces', to: '/spaces' },
   ]
 
   // Secondary navigation (management)
-  const secondaryNavItems: { icon: React.ElementType; label: string; panel: PanelType }[] = [
-    { icon: Users, label: 'Agents', panel: 'agents' },
-    { icon: Wand2, label: 'Skills', panel: 'skills' },
-    { icon: ListTodo, label: 'Tasks', panel: 'tasks' },
+  const secondaryNavItems = [
+    { icon: Users, label: 'Agents', to: '/agents' },
+    { icon: ListTodo, label: 'Tasks', to: '/tasks' },
   ]
 
-  // Tertiary navigation (content)
-  const tertiaryNavItems: { icon: React.ElementType; label: string; panel: PanelType }[] = [
-    { icon: Upload, label: 'Upload Documents', panel: 'documents' },
-    { icon: Bookmark, label: 'Topics', panel: 'topics' },
+  // Tertiary navigation (content & integrations)
+  const tertiaryNavItems = [
+    { icon: BookOpen, label: 'Knowledge', to: '/knowledge' },
+    { icon: Plug, label: 'Integrations', to: '/integrations' },
   ]
+
+  const handleLogout = () => {
+    logout()
+  }
+
+  // Get user initials
+  const getInitials = () => {
+    if (user?.username) {
+      return user.username.slice(0, 2).toUpperCase()
+    }
+    if (user?.email) {
+      return user.email.slice(0, 2).toUpperCase()
+    }
+    return 'U'
+  }
 
   return (
     <TooltipProvider delayDuration={300}>
-      <aside className="w-16 flex flex-col items-center py-3 bg-background-secondary border-r border-border">
+      <aside className="w-16 min-w-[64px] flex flex-col items-center py-3 bg-background-secondary border-r border-border shadow-md z-50">
         {/* Logo */}
         <Link
-          to="/"
+          to="/chat"
           className="flex items-center justify-center w-10 h-10 mb-4 rounded-lg bg-primary text-primary-foreground hover:bg-primary-hover hover:scale-105 transition-all"
         >
           <Sparkles className="h-5 w-5" />
@@ -118,15 +139,14 @@ export function IconRail({ activePanel, onPanelChange }: IconRailProps) {
 
         {/* Navigation Icons */}
         <nav className="flex-1 flex flex-col items-center gap-1">
-          {/* Primary nav - Chat */}
+          {/* Primary nav - Chat & Spaces */}
           {primaryNavItems.map((item) => (
             <NavIcon
-              key={item.panel}
+              key={item.to}
               icon={item.icon}
               label={item.label}
-              panel={item.panel}
-              activePanel={activePanel}
-              onClick={() => handlePanelClick(item.panel)}
+              to={item.to}
+              isActive={isActive(item.to)}
             />
           ))}
 
@@ -135,48 +155,37 @@ export function IconRail({ activePanel, onPanelChange }: IconRailProps) {
           {/* Secondary nav - Management */}
           {secondaryNavItems.map((item) => (
             <NavIcon
-              key={item.panel}
+              key={item.to}
               icon={item.icon}
               label={item.label}
-              panel={item.panel}
-              activePanel={activePanel}
-              onClick={() => handlePanelClick(item.panel)}
+              to={item.to}
+              isActive={isActive(item.to)}
             />
           ))}
 
           <Divider />
 
-          {/* Tertiary nav - Content */}
+          {/* Tertiary nav - Content & Integrations */}
           {tertiaryNavItems.map((item) => (
             <NavIcon
-              key={item.panel}
+              key={item.to}
               icon={item.icon}
               label={item.label}
-              panel={item.panel}
-              activePanel={activePanel}
-              onClick={() => handlePanelClick(item.panel)}
+              to={item.to}
+              isActive={isActive(item.to)}
             />
           ))}
         </nav>
 
         {/* Bottom Section */}
         <div className="flex flex-col items-center gap-2">
-          {/* Settings */}
-          <NavIcon
-            icon={Settings}
-            label="Settings"
-            panel="settings"
-            activePanel={activePanel}
-            onClick={() => handlePanelClick('settings')}
-          />
-
           {/* User Avatar with Dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="mt-2 focus:outline-none">
                 <Avatar className="h-9 w-9 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all">
                   <AvatarFallback className="bg-primary text-primary-foreground text-sm">
-                    AS
+                    {getInitials()}
                   </AvatarFallback>
                 </Avatar>
               </button>
@@ -184,21 +193,38 @@ export function IconRail({ activePanel, onPanelChange }: IconRailProps) {
             <DropdownMenuContent side="right" align="end" className="w-56">
               <DropdownMenuLabel>
                 <div className="flex flex-col">
-                  <span className="font-medium">Andrew Smart</span>
-                  <span className="text-xs text-foreground-secondary">andrew@studio55.co.uk</span>
+                  <span className="font-medium">{user?.username || 'User'}</span>
+                  <span className="text-xs text-foreground-secondary">{user?.email || ''}</span>
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => handlePanelClick('settings')}>
-                <User className="mr-2 h-4 w-4" />
-                Profile
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handlePanelClick('settings')}>
-                <Palette className="mr-2 h-4 w-4" />
-                Theme
+              <Link to="/settings">
+                <DropdownMenuItem>
+                  <User className="mr-2 h-4 w-4" />
+                  Profile
+                </DropdownMenuItem>
+              </Link>
+              <Link to="/settings">
+                <DropdownMenuItem>
+                  <Settings className="mr-2 h-4 w-4" />
+                  Settings
+                </DropdownMenuItem>
+              </Link>
+              <DropdownMenuItem onClick={toggleDarkMode}>
+                {isDarkMode ? (
+                  <>
+                    <Sun className="mr-2 h-4 w-4" />
+                    Light Mode
+                  </>
+                ) : (
+                  <>
+                    <Moon className="mr-2 h-4 w-4" />
+                    Dark Mode
+                  </>
+                )}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-destructive">
+              <DropdownMenuItem className="text-destructive" onClick={handleLogout}>
                 <LogOut className="mr-2 h-4 w-4" />
                 Sign out
               </DropdownMenuItem>

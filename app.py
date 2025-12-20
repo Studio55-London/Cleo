@@ -16,7 +16,7 @@ from flask_login import LoginManager, login_user, logout_user, login_required, c
 from flask_jwt_extended import JWTManager, jwt_required, get_jwt_identity, get_jwt, create_access_token, create_refresh_token
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from models import db, User, Agent, Job, Activity, Space, Message, Document, DocumentChunk, Entity, Relation, Integration, Skill, Task, Notification, CalendarEvent, TaskTemplate, OAuthAccount, TokenBlocklist, seed_integrations
+from models import db, User, Agent, Job, Activity, Space, Message, Document, DocumentChunk, Entity, Relation, Integration, Skill, Task, Notification, CalendarEvent, TaskTemplate, OAuthAccount, TokenBlocklist, KnowledgeBase, seed_integrations
 from services.task_service import TaskService
 from services.calendar_service import CalendarService
 from services.notification_service import NotificationService
@@ -1300,12 +1300,24 @@ def send_message(space_id):
                         clean_message = clean_message.replace(f'@{mention}', mention)
 
                     # Query knowledge base for relevant context (RAG)
+                    # Scope to space's knowledge bases (or all if global space)
                     knowledge_context = None
                     retrieved_sources = []
 
                     try:
                         vector_store = get_vector_store()
-                        search_results = vector_store.search(clean_message, n_results=3)
+
+                        # Get document IDs accessible from this space
+                        accessible_doc_ids = None
+                        if hasattr(space, 'get_accessible_document_ids'):
+                            accessible_doc_ids = space.get_accessible_document_ids()
+
+                        # Search with optional document filtering
+                        if accessible_doc_ids:
+                            search_results = vector_store.search(clean_message, n_results=3, document_ids=accessible_doc_ids)
+                        else:
+                            # Fallback to unscoped search (backwards compatibility)
+                            search_results = vector_store.search(clean_message, n_results=3)
 
                         if search_results:
                             # Build context from retrieved documents
@@ -3053,6 +3065,241 @@ def unassign_skill_from_agent(agent_id, skill_id):
 # API Routes - Knowledge Base
 # ===================================
 
+# --- Knowledge Base Management Endpoints ---
+
+@app.route('/api/spaces/<int:space_id>/knowledge-bases', methods=['GET'])
+def get_space_knowledge_bases(space_id):
+    """Get all knowledge bases for a space"""
+    try:
+        space = db.session.get(Space, space_id)
+        if not space:
+            return jsonify({'success': False, 'message': 'Space not found'}), 404
+
+        kbs = space.get_accessible_knowledge_bases()
+        return jsonify({
+            'success': True,
+            'knowledge_bases': [kb.to_dict() for kb in kbs],
+            'is_global_access': space.is_global or False
+        })
+    except Exception as e:
+        logger.error(f"Error getting knowledge bases: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/spaces/<int:space_id>/knowledge-bases', methods=['POST'])
+def create_knowledge_base(space_id):
+    """Create a new knowledge base in a space"""
+    try:
+        space = db.session.get(Space, space_id)
+        if not space:
+            return jsonify({'success': False, 'message': 'Space not found'}), 404
+
+        data = request.get_json()
+        kb = KnowledgeBase(
+            name=data.get('name', 'Untitled Knowledge Base'),
+            description=data.get('description', ''),
+            space_id=space_id,
+            is_default=data.get('is_default', False)
+        )
+        db.session.add(kb)
+        db.session.commit()
+
+        return jsonify({'success': True, 'knowledge_base': kb.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error creating knowledge base: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/knowledge-bases', methods=['GET'])
+def get_all_knowledge_bases():
+    """Get all knowledge bases"""
+    try:
+        kbs = KnowledgeBase.query.all()
+        return jsonify({
+            'success': True,
+            'knowledge_bases': [kb.to_dict() for kb in kbs]
+        })
+    except Exception as e:
+        logger.error(f"Error getting all knowledge bases: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/knowledge-bases/<int:kb_id>', methods=['GET'])
+def get_knowledge_base(kb_id):
+    """Get a specific knowledge base with its documents"""
+    try:
+        kb = db.session.get(KnowledgeBase, kb_id)
+        if not kb:
+            return jsonify({'success': False, 'message': 'Knowledge base not found'}), 404
+
+        return jsonify({
+            'success': True,
+            'knowledge_base': kb.to_dict(),
+            'documents': [doc.to_dict() for doc in kb.documents]
+        })
+    except Exception as e:
+        logger.error(f"Error getting knowledge base: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/knowledge-bases/<int:kb_id>', methods=['PUT'])
+def update_knowledge_base(kb_id):
+    """Update a knowledge base"""
+    try:
+        kb = db.session.get(KnowledgeBase, kb_id)
+        if not kb:
+            return jsonify({'success': False, 'message': 'Knowledge base not found'}), 404
+
+        data = request.get_json()
+        kb.name = data.get('name', kb.name)
+        kb.description = data.get('description', kb.description)
+        db.session.commit()
+
+        return jsonify({'success': True, 'knowledge_base': kb.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error updating knowledge base: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/knowledge-bases/<int:kb_id>', methods=['DELETE'])
+def delete_knowledge_base(kb_id):
+    """Delete a knowledge base (documents remain, just unlinked)"""
+    try:
+        kb = db.session.get(KnowledgeBase, kb_id)
+        if not kb:
+            return jsonify({'success': False, 'message': 'Knowledge base not found'}), 404
+
+        # Don't allow deleting the default KB if it has documents
+        if kb.is_default and kb.documents:
+            return jsonify({
+                'success': False,
+                'message': 'Cannot delete default knowledge base with documents. Move or remove documents first.'
+            }), 400
+
+        db.session.delete(kb)
+        db.session.commit()
+
+        return jsonify({'success': True, 'message': 'Knowledge base deleted'})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error deleting knowledge base: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/knowledge-bases/<int:kb_id>/documents', methods=['GET'])
+def get_knowledge_base_documents(kb_id):
+    """Get all documents in a knowledge base"""
+    try:
+        kb = db.session.get(KnowledgeBase, kb_id)
+        if not kb:
+            return jsonify({'success': False, 'message': 'Knowledge base not found'}), 404
+
+        return jsonify({
+            'success': True,
+            'documents': [doc.to_dict() for doc in kb.documents]
+        })
+    except Exception as e:
+        logger.error(f"Error getting knowledge base documents: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/knowledge-bases/<int:kb_id>/documents', methods=['POST'])
+def add_documents_to_knowledge_base(kb_id):
+    """Add documents to a knowledge base"""
+    try:
+        kb = db.session.get(KnowledgeBase, kb_id)
+        if not kb:
+            return jsonify({'success': False, 'message': 'Knowledge base not found'}), 404
+
+        data = request.get_json()
+        document_ids = data.get('document_ids', [])
+
+        added = 0
+        for doc_id in document_ids:
+            doc = db.session.get(Document, doc_id)
+            if doc and doc not in kb.documents:
+                kb.documents.append(doc)
+                added += 1
+
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': f'Added {added} documents to knowledge base',
+            'knowledge_base': kb.to_dict()
+        })
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error adding documents to knowledge base: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/knowledge-bases/<int:kb_id>/documents/<int:doc_id>', methods=['DELETE'])
+def remove_document_from_knowledge_base(kb_id, doc_id):
+    """Remove a document from a knowledge base"""
+    try:
+        kb = db.session.get(KnowledgeBase, kb_id)
+        if not kb:
+            return jsonify({'success': False, 'message': 'Knowledge base not found'}), 404
+
+        doc = db.session.get(Document, doc_id)
+        if doc and doc in kb.documents:
+            kb.documents.remove(doc)
+            db.session.commit()
+
+        return jsonify({'success': True, 'message': 'Document removed from knowledge base'})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error removing document from knowledge base: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/spaces/global', methods=['GET'])
+def get_global_space():
+    """Get the global space (creates one if it doesn't exist)"""
+    try:
+        global_space = Space.query.filter_by(is_global=True).first()
+
+        if not global_space:
+            # Create the global space
+            cleo_agent = Agent.query.filter_by(name='Cleo').first()
+
+            global_space = Space(
+                name='Chat with Cleo',
+                description='Your global workspace with access to all knowledge bases across all spaces.',
+                is_global=True,
+                master_agent_id=cleo_agent.id if cleo_agent else None
+            )
+            if cleo_agent:
+                global_space.set_agents([cleo_agent.id])
+
+            db.session.add(global_space)
+            db.session.flush()
+
+            # Create default KB for global space
+            default_kb = KnowledgeBase(
+                name='General Knowledge',
+                description='Your default knowledge base',
+                space_id=global_space.id,
+                is_default=True
+            )
+            db.session.add(default_kb)
+            db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'space': global_space.to_dict()
+        })
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error getting global space: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+# --- Document Management Endpoints ---
+
 def allowed_file(filename):
     """Check if file extension is allowed"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -3099,6 +3346,16 @@ def upload_document():
         file_size = os.path.getsize(file_path)
         file_type = filename.rsplit('.', 1)[1].lower()
 
+        # Get optional knowledge_base_ids from form data
+        knowledge_base_ids = request.form.get('knowledge_base_ids')
+        if knowledge_base_ids:
+            try:
+                knowledge_base_ids = json.loads(knowledge_base_ids)
+            except:
+                knowledge_base_ids = []
+        else:
+            knowledge_base_ids = []
+
         # Create document record
         document = Document(
             name=filename,
@@ -3109,6 +3366,25 @@ def upload_document():
         )
 
         db.session.add(document)
+        db.session.flush()  # Get the document ID
+
+        # Associate with specified knowledge bases
+        if knowledge_base_ids:
+            for kb_id in knowledge_base_ids:
+                kb = db.session.get(KnowledgeBase, kb_id)
+                if kb and document not in kb.documents:
+                    kb.documents.append(document)
+        else:
+            # Add to default KB of global space if no KB specified
+            global_space = Space.query.filter_by(is_global=True).first()
+            if global_space:
+                default_kb = KnowledgeBase.query.filter_by(
+                    space_id=global_space.id,
+                    is_default=True
+                ).first()
+                if default_kb and document not in default_kb.documents:
+                    default_kb.documents.append(document)
+
         db.session.commit()
 
         # Process document
@@ -3184,16 +3460,7 @@ def upload_document():
 
             return jsonify({
                 'success': True,
-                'document': {
-                    'id': document.id,
-                    'name': document.name,
-                    'file_type': document.file_type,
-                    'file_size': document.file_size,
-                    'status': document.status,
-                    'chunk_count': document.chunk_count,
-                    'entity_count': document.entity_count,
-                    'uploaded_at': document.uploaded_at.isoformat()
-                },
+                'document': document.to_dict(),
                 'message': 'Document uploaded and processed successfully'
             })
 

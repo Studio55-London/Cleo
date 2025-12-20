@@ -8,48 +8,42 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { useDeleteSkill } from '@/api'
-import type { Skill } from '@/types'
+import { useDeleteKnowledgeBase } from '@/api'
+import type { KnowledgeBase } from '@/types'
 
-interface DeleteSkillDialogProps {
+interface DeleteKnowledgeBaseDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  skill: Skill | null
+  knowledgeBase: KnowledgeBase | null
 }
 
-export function DeleteSkillDialog({
+export function DeleteKnowledgeBaseDialog({
   open,
   onOpenChange,
-  skill,
-}: DeleteSkillDialogProps) {
-  const deleteSkill = useDeleteSkill()
+  knowledgeBase,
+}: DeleteKnowledgeBaseDialogProps) {
+  const deleteKnowledgeBase = useDeleteKnowledgeBase()
 
   const handleDelete = async () => {
-    if (!skill) return
+    if (!knowledgeBase) return
 
     try {
-      await deleteSkill.mutateAsync(skill.id)
+      await deleteKnowledgeBase.mutateAsync(knowledgeBase.id)
       onOpenChange(false)
     } catch (error) {
-      console.error('Failed to delete skill:', error)
+      console.error('Failed to delete knowledge base:', error)
     }
   }
-
-  if (!skill) return null
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete Skill</AlertDialogTitle>
+          <AlertDialogTitle>Delete Knowledge Base</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to delete <strong>{skill.display_name}</strong>? This
-            action cannot be undone.
-            {skill.is_global && (
-              <span className="block mt-2 text-amber-600">
-                This is a global skill that may be used by multiple agents.
-              </span>
-            )}
+            Are you sure you want to delete "{knowledgeBase?.name}"? This will
+            remove all document associations but will not delete the documents
+            themselves. This action cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -57,9 +51,8 @@ export function DeleteSkillDialog({
           <AlertDialogAction
             onClick={handleDelete}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            disabled={deleteSkill.isPending}
           >
-            {deleteSkill.isPending ? 'Deleting...' : 'Delete'}
+            {deleteKnowledgeBase.isPending ? 'Deleting...' : 'Delete'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

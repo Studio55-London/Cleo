@@ -6,10 +6,10 @@
   :root {
     /* Background colors (light theme) */
     --background: 0 0% 100%;
-    --background-secondary: 0 0% 97%;
-    --background-tertiary: 0 0% 94%;
-    --background-hover: 0 0% 91%;
-    --background-active: 0 0% 88%;
+    --background-secondary: 0 0% 92%;
+    --background-tertiary: 0 0% 88%;
+    --background-hover: 0 0% 85%;
+    --background-active: 0 0% 82%;
 
     /* Foreground/text colors */
     --foreground: 0 0% 10%;

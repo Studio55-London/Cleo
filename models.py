@@ -287,12 +287,19 @@ class Space(db.Model):
     description = db.Column(db.Text)
     agent_ids = db.Column(db.Text)  # JSON string of agent IDs
     master_agent_id = db.Column(db.Integer, db.ForeignKey('agents.id'), nullable=True)  # Master agent for this space
+
+    # Global space flag - when True, this space can access ALL knowledge bases
+    is_global = db.Column(db.Boolean, default=False)
+    # Owner of the space (for multi-tenancy support)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
     messages = db.relationship('Message', backref='space', lazy=True, cascade='all, delete-orphan')
     master_agent = db.relationship('Agent', foreign_keys=[master_agent_id])
+    owner = db.relationship('User', backref=db.backref('spaces', lazy=True))
 
     def get_agents(self):
         """Get list of agent IDs in this space"""
@@ -306,6 +313,24 @@ class Space(db.Model):
     def set_agents(self, agent_list):
         """Set list of agent IDs for this space"""
         self.agent_ids = json.dumps(agent_list)
+
+    def get_accessible_knowledge_bases(self):
+        """Get all knowledge bases accessible from this space"""
+        if self.is_global:
+            # Global space can access ALL knowledge bases
+            return KnowledgeBase.query.all()
+        else:
+            # Regular space only accesses its own knowledge bases
+            return self.knowledge_bases if hasattr(self, 'knowledge_bases') else []
+
+    def get_accessible_document_ids(self):
+        """Get all document IDs accessible from this space (for vector search filtering)"""
+        kbs = self.get_accessible_knowledge_bases()
+        doc_ids = set()
+        for kb in kbs:
+            for doc in kb.documents:
+                doc_ids.add(doc.id)
+        return list(doc_ids)
 
     def to_dict(self):
         """Convert space to dictionary with full agent details"""
@@ -331,6 +356,11 @@ class Space(db.Model):
                 'description': self.master_agent.description
             }
 
+        # Get knowledge base summary
+        kb_list = []
+        if hasattr(self, 'knowledge_bases') and self.knowledge_bases:
+            kb_list = [{'id': kb.id, 'name': kb.name, 'document_count': len(kb.documents) if kb.documents else 0} for kb in self.knowledge_bases]
+
         return {
             'id': str(self.id),
             'name': self.name,
@@ -338,6 +368,9 @@ class Space(db.Model):
             'agents': agent_list,
             'master_agent_id': self.master_agent_id,
             'master_agent': master_agent_info,
+            'is_global': self.is_global or False,
+            'user_id': self.user_id,
+            'knowledge_bases': kb_list,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
             'unread': 0  # TODO: Implement unread count
@@ -423,6 +456,47 @@ class Message(db.Model):
 # Knowledge Base Models (GraphRAG)
 # ===================================
 
+# Association table for Document <-> KnowledgeBase many-to-many relationship
+knowledge_base_documents = db.Table('knowledge_base_documents',
+    db.Column('knowledge_base_id', db.Integer, db.ForeignKey('knowledge_bases.id', ondelete='CASCADE'), primary_key=True),
+    db.Column('document_id', db.Integer, db.ForeignKey('documents.id', ondelete='CASCADE'), primary_key=True),
+    db.Column('added_at', db.DateTime, default=datetime.utcnow)
+)
+
+
+class KnowledgeBase(db.Model):
+    """Knowledge base belonging to a Space - contains collections of documents"""
+    __tablename__ = 'knowledge_bases'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text)
+    space_id = db.Column(db.Integer, db.ForeignKey('spaces.id', ondelete='CASCADE'), nullable=False)
+    is_default = db.Column(db.Boolean, default=False)  # Default KB for the space
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    space = db.relationship('Space', backref=db.backref('knowledge_bases', lazy=True, cascade='all, delete-orphan'))
+    documents = db.relationship('Document', secondary=knowledge_base_documents, backref=db.backref('knowledge_bases', lazy=True))
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'space_id': self.space_id,
+            'space_name': self.space.name if self.space else None,
+            'is_default': self.is_default,
+            'document_count': len(self.documents) if self.documents else 0,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+    def __repr__(self):
+        return f'<KnowledgeBase {self.name} (Space: {self.space_id})>'
+
+
 class Document(db.Model):
     """Uploaded document for knowledge base"""
     __tablename__ = 'documents'
@@ -452,6 +526,11 @@ class Document(db.Model):
     chunks = db.relationship('DocumentChunk', backref='document', lazy=True, cascade='all, delete-orphan')
 
     def to_dict(self):
+        # Get knowledge bases this document belongs to
+        kb_list = []
+        if hasattr(self, 'knowledge_bases') and self.knowledge_bases:
+            kb_list = [{'id': kb.id, 'name': kb.name, 'space_id': kb.space_id} for kb in self.knowledge_bases]
+
         return {
             'id': self.id,
             'name': self.name,
@@ -465,7 +544,8 @@ class Document(db.Model):
             'uploaded_at': self.uploaded_at.isoformat() if self.uploaded_at else None,
             'processed_at': self.processed_at.isoformat() if self.processed_at else None,
             'storage_type': self.storage_type,
-            'blob_name': self.blob_name
+            'blob_name': self.blob_name,
+            'knowledge_bases': kb_list
         }
 
     def format_file_size(self):
